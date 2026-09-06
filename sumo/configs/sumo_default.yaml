@@ -1,7 +1,86 @@
 defaults:
   - judo_dora
+  - _self_
 
 task: spot_box_push
+
+# Full dataflow override (OmegaConf replaces lists wholesale, so we restate the
+# judo graph and add the `camera_image` edge: simulation -> visualization).
+dataflow:
+  nodes:
+    - id: simulation
+      path: dynamic
+      inputs:
+        sim_pause:
+          source: visualization/sim_pause
+          queue_size: 1
+        task:
+          source: visualization/task
+          queue_size: 1
+        task_reset:
+          source: visualization/task_reset
+          queue_size: 1
+        controls:
+          source: controller/controls
+          queue_size: 1
+      outputs:
+        - states
+        - render_pose
+        - camera_image
+    - id: visualization
+      path: dynamic
+      inputs:
+        render_pose:
+          source: simulation/render_pose
+          queue_size: 1
+        camera_image:
+          source: simulation/camera_image
+          queue_size: 1
+        traces:
+          source: controller/traces
+          queue_size: 1
+        plan_time:
+          source: controller/plan_time
+          queue_size: 1
+      outputs:
+        - sim_pause
+        - task
+        - task_reset
+        - optimizer
+        - controller_config
+        - optimizer_config
+        - task_config
+    - id: controller
+      path: dynamic
+      inputs:
+        sim_pause:
+          source: visualization/sim_pause
+          queue_size: 1
+        task:
+          source: visualization/task
+          queue_size: 1
+        task_reset:
+          source: visualization/task_reset
+          queue_size: 1
+        optimizer:
+          source: visualization/optimizer
+          queue_size: 1
+        states:
+          source: simulation/states
+          queue_size: 1
+        controller_config:
+          source: visualization/controller_config
+          queue_size: 1
+        optimizer_config:
+          source: visualization/optimizer_config
+          queue_size: 1
+        task_config:
+          source: visualization/task_config
+          queue_size: 1
+      outputs:
+        - controls
+        - traces
+        - plan_time
 
 node_definitions:
   simulation:

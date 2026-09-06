@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Generic, TypeVar, cast
 
+import mujoco
+import numpy as np
 from judo import MODEL_PATH as JUDO_MODEL_PATH
 from judo.tasks.base import TaskConfig
 from judo.tasks.spot.spot_base import SpotBase as _JudoSpotBase
@@ -71,6 +73,10 @@ def _resolve_public_object_asset(relpath: str) -> Path | None:
     return None
 
 
+# Name of the virtual camera mounted on Spot's head (front of the chassis).
+SPOT_HEAD_CAMERA_NAME = "spot_head"
+
+
 class SpotAssetMixin:
     """Align Spot robot assets with judo while preserving local object compatibility."""
 
@@ -92,6 +98,80 @@ class SpotAssetMixin:
         for texture in self.spec.textures:
             if "spot/textures/" in texture.file:
                 texture.file = str(menagerie_dir / "spot.png")
+
+        self._add_head_camera()
+
+    def _add_head_camera(self) -> None:
+        """Mount a forward-looking virtual camera on Spot's head (front of the chassis).
+
+        The camera is attached to the ``body`` body so it tracks the robot as it moves.
+        It looks along the body's +x axis (forward) with +z (world up) as the image-up
+        direction, mimicking a head-mounted RGB camera. A small visual-only marker
+        (no collision) is added so the camera's mount and view direction are visible in
+        the 3D scene.
+        """
+        if any(cam.name == SPOT_HEAD_CAMERA_NAME for cam in self.spec.cameras):
+            return
+
+        try:
+            body = self.spec.body("body")
+        except (ValueError, KeyError):
+            # No chassis body to attach to (non-standard Spot model); skip silently.
+            return
+
+        # Front-top of the chassis (body collision box half-extents are 0.42 x 0.11 x 0.08).
+        cam_pos = np.array([0.44, 0.0, 0.10])
+
+        cam = body.add_camera()
+        cam.name = SPOT_HEAD_CAMERA_NAME
+        cam.pos = cam_pos
+        cam.fovy = 90.0
+        # Look forward (body +x) with world-up (+z) as image up. A small downward pitch
+        # can be dialed in via ``pitch_down`` if the target sits low in frame, but 0deg
+        # keeps distant targets (near the horizon) in view. The columns of the rotation
+        # matrix are the camera x/y/z axes in the body frame (camera looks along -z):
+        #   x_cam (right) = (0, -1, 0)
+        #   y_cam (up)    = (sin a, 0, cos a)
+        #   z_cam (-look) = (-cos a, 0, sin a)
+        pitch_down = np.deg2rad(0.0)
+        s, c = np.sin(pitch_down), np.cos(pitch_down)
+        rot = np.array([0.0, s, -c, -1.0, 0.0, 0.0, 0.0, c, s])
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, rot)
+        cam.quat = quat
+
+        self._add_head_camera_marker(body, cam_pos, quat, look=np.array([c, 0.0, -s]))
+
+    def _add_head_camera_marker(self, body: Any, cam_pos: np.ndarray, cam_quat: np.ndarray, look: np.ndarray) -> None:
+        """Add a visual-only marker showing the head camera's mount and view direction.
+
+        The marker geoms carry no collision (contype/conaffinity = 0) and live in geom
+        group 3, which MuJoCo's renderer hides by default (so the marker never appears in
+        the camera's own image), while viser renders all groups (so it shows in the GUI).
+        """
+        # Camera housing: a small box aligned with the camera frame at the mount point.
+        housing = body.add_geom()
+        housing.name = "spot_head_cam_housing"
+        housing.type = mujoco.mjtGeom.mjGEOM_BOX
+        housing.pos = cam_pos
+        housing.quat = cam_quat
+        housing.size = [0.025, 0.035, 0.02]
+        housing.rgba = [0.12, 0.12, 0.14, 1.0]
+        housing.contype = 0
+        housing.conaffinity = 0
+        housing.group = 3
+
+        # View direction: a "lens" cylinder pointing along the camera's look direction.
+        lens = body.add_geom()
+        lens.name = "spot_head_cam_lens"
+        lens.type = mujoco.mjtGeom.mjGEOM_CYLINDER
+        tip = cam_pos + look * 0.12
+        lens.fromto = [*cam_pos.tolist(), *tip.tolist()]
+        lens.size = [0.01, 0.0, 0.0]  # radius; length derives from fromto
+        lens.rgba = [0.95, 0.35, 0.05, 1.0]
+        lens.contype = 0
+        lens.conaffinity = 0
+        lens.group = 3
 
 
 class SpotBase(SpotAssetMixin, _JudoSpotBase, Generic[ConfigT]):
@@ -174,4 +254,4 @@ class SpotBase(SpotAssetMixin, _JudoSpotBase, Generic[ConfigT]):
         )
 
 
-__all__ = ["SpotAssetMixin", "SpotBase", "SpotBaseConfig"]
+__all__ = ["SPOT_HEAD_CAMERA_NAME", "SpotAssetMixin", "SpotBase", "SpotBaseConfig"]
