@@ -11,6 +11,7 @@ G1_TASK_NAMES = (
     "g1_table_push",
 )
 
+
 from sumo.tasks.g1.g1_base import G1Base, G1BaseConfig
 from sumo.tasks.g1.g1_box import G1Box, G1BoxConfig
 from sumo.tasks.g1.g1_chair_push import G1ChairPush, G1ChairPushConfig
@@ -50,6 +51,10 @@ SPOT_TASK_NAMES = (
     "spot_chair_ramp",
     "spot_barrier_upright",
     "spot_barrier_drag",
+    "spot_barrel_drag_v1",
+    "spot_barrel_push",
+    "spot_barrel_upright",
+    "spot_bucket_drag",
     "spot_tire_roll",
     "spot_tire_stack",
     "spot_tire_rack_drag",
@@ -75,6 +80,10 @@ from sumo.tasks.spot.spot_tire_rack_drag import SpotTireRackDrag, SpotTireRackDr
 from sumo.tasks.spot.spot_tire_roll import SpotTireRoll, SpotTireRollConfig
 from sumo.tasks.spot.spot_tire_stack import SpotTireStack, SpotTireStackConfig
 from sumo.tasks.spot.spot_tire_upright import SpotTireUpright, SpotTireUprightConfig
+from sumo.tasks.spot.spot_barrel_drag_v1 import SpotBarrelDrag, SpotBarrelDragConfig
+from sumo.tasks.spot.spot_barrel_push import SpotBarrelPush, SpotBarrelPushConfig
+from sumo.tasks.spot.spot_barrel_upright import SpotBarrelUpright, SpotBarrelUprightConfig
+from sumo.tasks.spot.spot_bucket_drag import SpotBucketDrag, SpotBucketDragConfig
 
 _SPOT_REGISTRATION_KWARGS = {
     "rollout_backend": "mujoco_hierarchical",
@@ -96,6 +105,10 @@ register_task("spot_tire_upright", SpotTireUpright, SpotTireUprightConfig, **_SP
 register_task("spot_chair_ramp", SpotChairRamp, SpotChairRampConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrier_upright", SpotBarrierUpright, SpotBarrierUprightConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrier_drag", SpotBarrierDrag, SpotBarrierDragConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_barrel_drag_v1", SpotBarrelDrag, SpotBarrelDragConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_barrel_push", SpotBarrelPush, SpotBarrelPushConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_barrel_upright", SpotBarrelUpright, SpotBarrelUprightConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_bucket_drag", SpotBucketDrag, SpotBucketDragConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_tire_roll", SpotTireRoll, SpotTireRollConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_tire_stack", SpotTireStack, SpotTireStackConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_tire_rack_drag", SpotTireRackDrag, SpotTireRackDragConfig, **_SPOT_REGISTRATION_KWARGS)

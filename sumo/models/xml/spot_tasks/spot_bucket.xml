@@ -1,0 +1,61 @@
+<mujoco model="spot_bucket">
+  <!-- Spot + bucket-with-handle scene. Mirrors spot_tire_rack.xml; object and grasp sensor differ. -->
+  <include file="../spot_components/default.xml"/>
+  <include file="../spot_components/assets.xml"/>
+
+  <worldbody>
+    <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5" dir="0 0 -1" castshadow="false"/>
+    <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1"/>
+
+    <geom name="ground" type="plane" size="10 10 0.01" class="collision" priority="5" friction="0.7" material="blue_grid"/>
+
+    <body name="body" pos="0 0 0.7">
+      <include file="../spot_components/body.xml"/>
+      <include file="../spot_components/legs.xml"/>
+      <include file="../spot_components/arm.xml"/>
+    </body>
+  </worldbody>
+
+  <include file="../objects/bucket/bucket.xml"/>
+
+  <include file="../spot_components/actuator.xml"/>
+  <include file="../spot_components/sensor.xml"/>
+  <include file="../spot_components/contact.xml"/>
+
+  <sensor>
+    <!-- Robot base + foot sensors (for the locomotion backend; identical to spot_tire_rack.xml). -->
+    <framepos name="base_position" objtype="site" objname="site_body"/>
+    <framexaxis name="base_xaxis" objtype="body" objname="body"/>
+    <frameyaxis name="base_yaxis" objtype="body" objname="body"/>
+    <framezaxis name="base_zaxis" objtype="body" objname="body"/>
+
+    <framepos name="fl_pos" objtype="site" objname="site_front_left"/>
+    <framepos name="fr_pos" objtype="site" objname="site_front_right"/>
+    <framepos name="hl_pos" objtype="site" objname="site_rear_left"/>
+    <framepos name="hr_pos" objtype="site" objname="site_rear_right"/>
+
+    <subtreecom name="base_subtreecom" body="body"/>
+    <subtreelinvel name="base_subtreelinvel" body="body"/>
+    <subtreeangmom name="base_angmom" body="body"/>
+
+    <framepos name="trace_body" objtype="site" objname="site_body"/>
+    <framepos name="trace_fngr_site" objtype="site" objname="site_arm_link_fngr"/>
+    <framepos name="trace_bucket" objtype="site" objname="trace_bucket"/>
+
+    <!-- Object orientation: x-axis from body; y/z-axis come from shared sensor.xml (on site_object). -->
+    <framexaxis name="object_x_axis" objtype="body" objname="bucket"/>
+
+    <!-- Gripper (wr1) to the handle grasp point. -->
+    <framepos name="sensor_gripper_to_grasp_handle" objtype="site" objname="site_arm_link_wr1" reftype="site" refname="site_grasp_handle"/>
+
+    <!-- Gripper orientation. -->
+    <framexaxis name="sensor_gripper_x_axis" objtype="site" objname="site_arm_link_wr1"/>
+    <frameyaxis name="sensor_gripper_y_axis" objtype="site" objname="site_arm_link_wr1"/>
+    <framezaxis name="sensor_gripper_z_axis" objtype="site" objname="site_arm_link_wr1"/>
+
+    <!-- Torso to approach sites (three, like tire_rack). -->
+    <framepos name="sensor_torso_to_approach_left" objtype="site" objname="site_body" reftype="site" refname="site_approach_left"/>
+    <framepos name="sensor_torso_to_approach_mid" objtype="site" objname="site_body" reftype="site" refname="site_approach_mid"/>
+    <framepos name="sensor_torso_to_approach_right" objtype="site" objname="site_body" reftype="site" refname="site_approach_right"/>
+  </sensor>
+</mujoco>

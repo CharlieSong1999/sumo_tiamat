@@ -1,0 +1,49 @@
+<mujoco model="bucket">
+  <!-- Bucket with a rigid bail handle. Visual = full imported mesh; collision = a cylinder body
+       + 3 thin capsules forming the handle arc. The handle TOP capsule is the grasp target:
+       it is thin enough (r=8mm) for Spot's gripper to pinch, and its presence is what makes the
+       resistance-based grasp detection fire (the gripper can't fully close around it).
+
+       Geometry note: the raw mesh is Y-up; the visual geom is rotated 90 deg about X (Y->Z).
+       Collision geoms/sites below are written directly in the final Z-up BODY frame:
+         bucket body cylinder spans z in [-0.22, +0.12]; handle arc spans z in [+0.12, +0.21]. -->
+  <include file="bucket_defs.xml"/>
+
+  <worldbody>
+    <body name="bucket" pos="0 0 0">
+      <joint name="bucket_joint" type="free"/>
+
+      <!-- Solid-cylinder inertia for m=5 kg, r=0.13, h=0.34; COM at the body's geometric center (z=-0.05). -->
+      <inertial pos="0 0 -0.05" mass="115.0" diaginertia="0.069 0.069 0.042"/>
+
+      <!-- Visual: full mesh, rotated so its Y axis (up) points to Z. -->
+      <geom name="bucket_visual" class="visual_bucket" type="mesh" mesh="bucket_mesh"
+            quat="0.7071 0.7071 0 0" material="bucket_material"/>
+
+      <!-- Collision: bucket body (single convex cylinder; no decomposition needed for the body). -->
+      <geom name="bucket_body_collision" class="collision_bucket" type="cylinder"
+            pos="0 0 -0.05" size="0.13 0.17"/>
+
+      <!-- Collision: rigid bail handle, 3 thin capsules. The handle lies in the X-Z plane (thin in Y). -->
+      <geom name="handle_top"   class="collision_bucket" type="capsule" size="0.008"
+            fromto="-0.07 0 0.21   0.07 0 0.21"/>   <!-- top bar (grasp target), runs along X -->
+      <geom name="handle_left"  class="collision_bucket" type="capsule" size="0.008"
+            fromto="-0.13 0 0.12  -0.07 0 0.21"/>   <!-- left riser, rim -> apex -->
+      <geom name="handle_right" class="collision_bucket" type="capsule" size="0.008"
+            fromto="0.13 0 0.12   0.07 0 0.21"/>    <!-- right riser, rim -> apex -->
+
+      <!-- REQUIRED: shared spot_components/sensor.xml references site_object. -->
+      <site name="site_object" pos="0 0 0" size="0.01"/>
+      <site name="trace_bucket" pos="0 0 0" size="0.01"/>
+
+      <!-- Grasp target: center of the handle top bar. -->
+      <site name="site_grasp_handle" pos="0 0 0.21" size="0.01"/>
+      <site name="trace_grasp_handle" pos="0 0 0.21" size="0.01"/>
+
+      <!-- Approach sites around the bucket for the torso-proximity reward. -->
+      <site name="site_approach_left"  pos="0 -0.6 0" size="0.01"/>
+      <site name="site_approach_mid"   pos="-0.6 0 0" size="0.01"/>
+      <site name="site_approach_right" pos="0 0.6 0" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>

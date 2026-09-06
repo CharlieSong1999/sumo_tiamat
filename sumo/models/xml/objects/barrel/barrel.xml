@@ -1,0 +1,32 @@
+<mujoco model="barrel">
+  <!-- A plain cylindrical barrel (no handle). Visual = imported mesh, collision = single upright cylinder. -->
+  <include file="barrel_defs.xml"/>
+
+  <worldbody>
+    <body name="barrel" pos="0 0 0">
+      <joint name="barrel_joint" type="free"/>
+
+      <!-- Solid-cylinder inertia for m=8 kg, r=0.29 m, h=0.90 m.
+           MUST set this explicitly: otherwise MuJoCo derives mass from geom density
+           and a 0.24 m^3 cylinder at default density (1000) would weigh ~240 kg. -->
+      <inertial pos="0 0 0" mass="8.0" diaginertia="0.71 0.71 0.34"/>
+
+      <!-- Visual: imported mesh. Its cylinder axis is along local Y, but MuJoCo is Z-up,
+           so rotate 90 deg about X (Y -> Z) to stand the barrel upright. -->
+      <geom name="barrel_visual" class="visual_barrel" type="mesh" mesh="barrel_mesh"
+            quat="0.7071 0.7071 0 0" material="barrel_material"/>
+
+      <!-- Collision: a single upright cylinder. A cylinder is convex, so NO decomposition needed.
+           size = "radius half_height" = "0.29 0.45" -> 0.58 m dia x 0.90 m tall.
+           friction = [slide torsion roll]; low roll friction lets it roll when tipped on its side. -->
+      <geom name="barrel_collision" class="collision_barrel" type="cylinder"
+            size="0.29 0.45" friction="0.6 0.3 0.0001"/>
+
+      <!-- REQUIRED: every object placed in a Spot scene must define site_object;
+           spot_components/sensor.xml references it (gripper-to-object, object axes, etc.). -->
+      <site name="site_object" pos="0 0 0" size="0.01"/>
+      <!-- Trace point for the task-specific reward/visualization. -->
+      <site name="trace_barrel" pos="0 0 0" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>

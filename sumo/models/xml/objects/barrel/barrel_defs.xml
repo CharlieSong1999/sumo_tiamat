@@ -1,0 +1,21 @@
+<mujoco model="barrel_defs">
+  <!-- Asset + style declarations for the barrel object. Mirrors the traffic_cone/yellow_chair _defs pattern. -->
+  <default>
+    <!-- Visual: rendered only, never collides (contype/conaffinity = 0). -->
+    <default class="visual_barrel">
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+    <!-- Collision: participates in contact, lives in group 3 (toggle in viser to debug). -->
+    <default class="collision_barrel">
+      <geom priority="6" group="3"/>
+    </default>
+  </default>
+
+  <asset>
+    <!-- Solid color for now; swap in a <texture>/<material> pair later to use model_baseColor.png. -->
+    <material name="barrel_material" rgba="0.15 0.35 0.75 1"/>
+    <!-- Imported mesh is ~2.0 units tall (along its local Y) x ~1.30 across.
+         scale=0.45 -> ~0.90 m tall, ~0.585 m diameter (a realistic oil drum). -->
+    <mesh name="barrel_mesh" file="../../../meshes/barrel/model.obj" scale="0.45 0.45 0.45"/>
+  </asset>
+</mujoco>
