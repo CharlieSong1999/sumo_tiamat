@@ -59,6 +59,7 @@ SPOT_TASK_NAMES = (
     "spot_tire_stack",
     "spot_tire_rack_drag",
     "spot_rugged_box_push",
+    "spot_jug_kick",
     "spot_pit_move",
     "spot_pit_move_plant",
     "spot_pit_pour",
@@ -66,16 +67,21 @@ SPOT_TASK_NAMES = (
 )
 
 # Spot tasks (advanced, using C++ ONNX rollout backend via judo-rai's mujoco_spot)
+from sumo.tasks.spot.spot_barrel_drag_v1 import SpotBarrelDrag, SpotBarrelDragConfig
+from sumo.tasks.spot.spot_barrel_push import SpotBarrelPush, SpotBarrelPushConfig
+from sumo.tasks.spot.spot_barrel_upright import SpotBarrelUpright, SpotBarrelUprightConfig
 from sumo.tasks.spot.spot_barrier_drag import SpotBarrierDrag, SpotBarrierDragConfig
 from sumo.tasks.spot.spot_barrier_upright import SpotBarrierUpright, SpotBarrierUprightConfig
 from sumo.tasks.spot.spot_base import SpotBase, SpotBaseConfig
 from sumo.tasks.spot.spot_box_push import SpotBoxPush, SpotBoxPushConfig
 from sumo.tasks.spot.spot_box_upright import SpotBoxUpright, SpotBoxUprightConfig
+from sumo.tasks.spot.spot_bucket_drag import SpotBucketDrag, SpotBucketDragConfig
 from sumo.tasks.spot.spot_chair_push import SpotChairPush, SpotChairPushConfig
 from sumo.tasks.spot.spot_chair_ramp import SpotChairRamp, SpotChairRampConfig
 from sumo.tasks.spot.spot_chair_upright import SpotChairUpright, SpotChairUprightConfig
 from sumo.tasks.spot.spot_cone_push import SpotConePush, SpotConePushConfig
 from sumo.tasks.spot.spot_cone_upright import SpotConeUpright, SpotConeUprightConfig
+from sumo.tasks.spot.spot_jug_kick import SpotJugKick, SpotJugKickConfig
 from sumo.tasks.spot.spot_rack_push import SpotRackPush, SpotRackPushConfig
 from sumo.tasks.spot.spot_rack_upright import SpotRackUpright, SpotRackUprightConfig
 from sumo.tasks.spot.spot_rugged_box_push import SpotRuggedBoxPush, SpotRuggedBoxPushConfig
@@ -84,10 +90,6 @@ from sumo.tasks.spot.spot_tire_rack_drag import SpotTireRackDrag, SpotTireRackDr
 from sumo.tasks.spot.spot_tire_roll import SpotTireRoll, SpotTireRollConfig
 from sumo.tasks.spot.spot_tire_stack import SpotTireStack, SpotTireStackConfig
 from sumo.tasks.spot.spot_tire_upright import SpotTireUpright, SpotTireUprightConfig
-from sumo.tasks.spot.spot_barrel_drag_v1 import SpotBarrelDrag, SpotBarrelDragConfig
-from sumo.tasks.spot.spot_barrel_push import SpotBarrelPush, SpotBarrelPushConfig
-from sumo.tasks.spot.spot_barrel_upright import SpotBarrelUpright, SpotBarrelUprightConfig
-from sumo.tasks.spot.spot_bucket_drag import SpotBucketDrag, SpotBucketDragConfig
 
 _SPOT_REGISTRATION_KWARGS = {
     "rollout_backend": "mujoco_hierarchical",
@@ -117,6 +119,7 @@ register_task("spot_tire_roll", SpotTireRoll, SpotTireRollConfig, **_SPOT_REGIST
 register_task("spot_tire_stack", SpotTireStack, SpotTireStackConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_tire_rack_drag", SpotTireRackDrag, SpotTireRackDragConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_rugged_box_push", SpotRuggedBoxPush, SpotRuggedBoxPushConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_kick", SpotJugKick, SpotJugKickConfig, **_SPOT_REGISTRATION_KWARGS)
 
 # Pit water-pitcher tasks: planner variants (no balls) + plant variants (with water balls).
 from sumo.tasks.spot.spot_pit_move import SpotPitMove, SpotPitMoveConfig, SpotPitMovePlant

@@ -1,0 +1,30 @@
+<mujoco model="jug_defs">
+  <!-- Asset + style declarations for the GE 5-gallon blue water jug.
+
+       The mesh is the PRODUCTION TRACKING MESH from the real2sim pipeline
+       (bag2sim/results/mesh/jug_meshy_20k.obj): Meshy-generated, fitted to the real
+       jug observed in the GE cart-barrel recordings (silhouette IoU 0.92), decimated
+       to ~20k faces. It is METRIC (0.281 x 0.281 x 0.483 m, matching the nominal
+       48.3 x 27.9 cm jug), Z-UP, and CENTERED at the geometric center -- so the sim
+       body frame equals the FoundationPose++ object frame and a tracked real-world
+       pose can be written 1:1 into the jug free joint. Do NOT re-scale or re-orient
+       this mesh; regenerate it in bag2sim if the physical jug changes.
+
+       The OBJ carries per-vertex colors that MuJoCo ignores; jug_material approximates
+       the mean vertex color (light blue plastic). -->
+  <default>
+    <default class="visual_jug">
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+    <default class="collision_jug">
+      <!-- Collision uses the mesh's convex hull (computed by MuJoCo). priority=6 and
+           friction follow the other sumo objects (barrel/pit). -->
+      <geom priority="6" group="3" friction="0.6 0.005 0.0001"/>
+    </default>
+  </default>
+
+  <asset>
+    <material name="jug_material" rgba="0.60 0.64 0.88 1" specular="0.4" shininess="0.5"/>
+    <mesh name="jug_mesh" file="../../../meshes/jug/jug_meshy_20k.obj"/>
+  </asset>
+</mujoco>
