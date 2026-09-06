@@ -1,0 +1,30 @@
+<mujoco model="jug">
+  <!-- GE 5-gallon water jug as a free rigid body.
+
+       Body frame = mesh frame = FoundationPose++ tracking frame (metric, z-up,
+       origin at the geometric center; see barrel_jug_defs.xml). Upright rest height of the
+       body origin is +0.2415 m (half the 0.483 m mesh height). -->
+  <include file="barrel_jug_defs.xml"/>
+
+  <worldbody>
+    <body name="barrel" pos="0 0 0">
+      <joint name="barrel_joint" type="free"/>
+
+      <!-- Nearly-empty jug ~1.0 kg (a FULL 5-gallon jug is ~19 kg and is not
+           kickable -- retune mass/inertia if the task ever uses a filled jug).
+           Inertia approximates a cylinder r=0.14 m, h=0.483 m with a slightly
+           bottom-heavy COM (thick base), matching the mesh vertex centroid. -->
+      <inertial pos="0 0 -0.03" mass="1.0" diaginertia="0.0243 0.0243 0.014"/>
+
+      <!-- Visual = full mesh; collision = its convex hull. Identity pose on both so
+           body frame stays exactly the tracking-mesh frame. -->
+      <geom name="barrel_visual" class="visual_jug" type="mesh" mesh="barrel_jug_mesh" material="barrel_jug_material"/>
+      <geom name="barrel_collision" class="collision_jug" type="mesh" mesh="barrel_jug_mesh"/>
+
+      <!-- REQUIRED: shared spot_components/sensor.xml references site_object.
+           Identity pose => object_y/z_axis sensors report the jug's own axes. -->
+      <site name="site_object" pos="0 0 0" size="0.01"/>
+      <site name="trace_barrel" pos="0 0 0.24" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
