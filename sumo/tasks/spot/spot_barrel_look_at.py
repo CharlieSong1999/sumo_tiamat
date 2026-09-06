@@ -11,10 +11,15 @@ base-velocity action space as the deployed spot_navigate). Two things are added:
    yaw-rate action (``max_yaw_rate``, narrowing the +-0.7 rad/s the base task allows), so
    no sampled rollout can even try a fast turn; and a SOFT cost on |yaw rate| in the
    reward (``w_yaw_rate``), so among legal turns the slower one wins.
+3. YAW ONLY (``lock_xy``, default on): the vx and vy actions are hard-bounded to 0, so the
+   only thing the planner can do is turn in place. Asked for on the real robot
+   (2026-09-07): with a goal at the current position the navigate term still let the
+   optimiser trade small steps and a forward lean against the heading error; turning
+   in place is the whole task.
 
-Everything else -- the navigate-to-goal term, the fall penalty, the perceived-object
-plumbing -- is inherited unchanged. With the planner's ``--goal-relative 0 0`` this is
-"hold position, turn to face the barrel, slowly".
+Everything else -- the navigate-to-goal term (constant under lock_xy), the fall penalty,
+the perceived-object plumbing -- is inherited unchanged. With the planner's
+``--goal-relative 0 0`` this is "stand still, turn to face the barrel, slowly".
 """
 
 from dataclasses import dataclass
@@ -34,6 +39,7 @@ class SpotBarrelLookAtConfig(SpotBarrelPerceiveConfig):
     w_look: float = 30.0          # heading-error weight: 90 deg off costs 30 (= 0.5 m of goal)
     w_yaw_rate: float = 5.0       # soft cost per rad/s of commanded yaw rate
     max_yaw_rate: float = 0.4     # hard bound on the yaw-rate action, rad/s (base task: 0.7)
+    lock_xy: bool = True          # vx = vy = 0: turn in place, never step or lean into it
 
 
 class SpotBarrelLookAt(SpotBarrelPerceive):
@@ -49,11 +55,14 @@ class SpotBarrelLookAt(SpotBarrelPerceive):
 
     @property
     def actuator_ctrlrange(self) -> np.ndarray:
-        """The base task's bounds with the yaw-rate row narrowed to +-max_yaw_rate."""
+        """The base task's bounds with the yaw-rate row narrowed to +-max_yaw_rate and,
+        under lock_xy, the vx/vy rows collapsed to [0, 0]."""
         limits = np.array(super().actuator_ctrlrange, dtype=float, copy=True)
         cap = float(self.config.max_yaw_rate)
         limits[YAW_RATE_INDEX] = [max(limits[YAW_RATE_INDEX, 0], -cap),
                                   min(limits[YAW_RATE_INDEX, 1], cap)]
+        if self.config.lock_xy:
+            limits[:YAW_RATE_INDEX] = 0.0
         return limits
 
     def heading_cos(self, qpos: np.ndarray) -> np.ndarray:

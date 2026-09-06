@@ -37,7 +37,20 @@ def test_yaw_rate_is_hard_capped(task):
     capped = task.actuator_ctrlrange
     assert base[YAW_RATE_INDEX, 1] > task.config.max_yaw_rate  # the cap actually narrows
     np.testing.assert_allclose(capped[YAW_RATE_INDEX], [-task.config.max_yaw_rate, task.config.max_yaw_rate])
-    np.testing.assert_allclose(capped[:YAW_RATE_INDEX], base[:YAW_RATE_INDEX])  # vx, vy untouched
+
+
+def test_lock_xy_default_turns_in_place_only(task):
+    assert task.config.lock_xy
+    capped = task.actuator_ctrlrange
+    np.testing.assert_allclose(capped[:YAW_RATE_INDEX], 0.0)          # vx, vy cannot be commanded
+    assert capped[YAW_RATE_INDEX, 1] > 0.0                             # yaw still can
+
+
+def test_lock_xy_off_keeps_the_base_xy_bounds():
+    from sumo.tasks.spot.spot_barrel_look_at import SpotBarrelLookAtConfig
+    free = SpotBarrelLookAt(SpotBarrelLookAtConfig(lock_xy=False))
+    base = SpotBarrelPerceive().actuator_ctrlrange
+    np.testing.assert_allclose(free.actuator_ctrlrange[:YAW_RATE_INDEX], base[:YAW_RATE_INDEX])
 
 
 def test_yaw_rate_index_is_the_torso_yaw_command(task):
