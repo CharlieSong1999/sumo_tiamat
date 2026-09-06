@@ -59,6 +59,10 @@ SPOT_TASK_NAMES = (
     "spot_tire_stack",
     "spot_tire_rack_drag",
     "spot_rugged_box_push",
+    "spot_pit_move",
+    "spot_pit_move_plant",
+    "spot_pit_pour",
+    "spot_pit_pour_plant",
 )
 
 # Spot tasks (advanced, using C++ ONNX rollout backend via judo-rai's mujoco_spot)
@@ -113,6 +117,15 @@ register_task("spot_tire_roll", SpotTireRoll, SpotTireRollConfig, **_SPOT_REGIST
 register_task("spot_tire_stack", SpotTireStack, SpotTireStackConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_tire_rack_drag", SpotTireRackDrag, SpotTireRackDragConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_rugged_box_push", SpotRuggedBoxPush, SpotRuggedBoxPushConfig, **_SPOT_REGISTRATION_KWARGS)
+
+# Pit water-pitcher tasks: planner variants (no balls) + plant variants (with water balls).
+from sumo.tasks.spot.spot_pit_move import SpotPitMove, SpotPitMoveConfig, SpotPitMovePlant
+from sumo.tasks.spot.spot_pit_pour import SpotPitPour, SpotPitPourConfig, SpotPitPourPlant
+
+register_task("spot_pit_move", SpotPitMove, SpotPitMoveConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_pit_move_plant", SpotPitMovePlant, SpotPitMoveConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_pit_pour", SpotPitPour, SpotPitPourConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_pit_pour_plant", SpotPitPourPlant, SpotPitPourConfig, **_SPOT_REGISTRATION_KWARGS)
 
 SUMO_TASK_NAMES = G1_TASK_NAMES + SPOT_TASK_NAMES
 

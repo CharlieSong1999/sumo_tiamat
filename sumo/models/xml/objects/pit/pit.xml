@@ -1,0 +1,109 @@
+<mujoco model="pit">
+  <!-- "Pit" water container: a clear rectangular pitcher with a vertical loop handle
+       (+X face) and a pour spout (-X rim). Visual = full imported mesh; collision =
+       floor box + 4 thin wall boxes forming the open cavity + 3 capsules for the handle.
+       The handle OUTER BAR is the grasp target: r=8mm, thin enough for Spot's gripper
+       to pinch (same convention as the bucket's handle top bar).
+
+       Geometry note: the raw mesh is Y-up; the visual geom is rotated 90 deg about X
+       (Y->Z). Collision geoms/sites are written directly in the final Z-up BODY frame:
+         - body origin sits at the CENTER OF THE INTERIOR FLOOR (z=0 = floor top)
+         - interior cavity: x in [-0.105, +0.105], y in [-0.066, +0.066], z in [0, 0.38]
+         - outer bottom of the jug is at z=-0.02, so the body rests on flat ground with
+           its origin at z=+0.02 (free-joint reset height)
+         - handle outer bar: vertical capsule near x=+0.166, z in [0.16, 0.36]
+       Wall boxes are 20 mm thick: at the 10 ms physics timestep a ball would need
+       >3.5 m/s toward a wall to tunnel through in a single step. -->
+  <include file="pit_defs.xml"/>
+
+  <worldbody>
+    <body name="pit" pos="0 0 0">
+      <joint name="pit_joint" type="free"/>
+
+      <!-- Empty container ~1.0 kg; box-shell inertia approximation, COM at ~40% height. -->
+      <inertial pos="0 0 0.15" mass="1.0" diaginertia="0.0181 0.0152 0.0067"/>
+
+      <!-- Visual: full mesh, rotated so its Y axis (up) points to Z. The x/z offsets
+           center the interior cavity at the body origin and put the interior floor
+           top at z=0 (raw floor plane is at Y=-0.90, cavity x-center at raw -0.074). -->
+      <geom name="pit_visual" class="visual_pit" type="mesh" mesh="pit_mesh"
+            pos="0.0147 0 0.18" quat="0.7071 0.7071 0 0" material="pit_material"/>
+
+      <!-- Collision: interior floor (top face at z=0). -->
+      <geom name="pit_floor_collision" class="collision_pit" type="box"
+            pos="0 0 -0.02" size="0.115 0.075 0.02"/>
+
+      <!-- Collision: 4 walls (boxes, 20 mm thick, height spans z in [0, 0.38]).
+           Long walls (normal +-y) overlap the short walls' x-extent to close corners. -->
+      <geom name="pit_wall_yneg" class="collision_pit" type="box"
+            pos="0 -0.0758 0.19" size="0.1247 0.010 0.19"/>
+      <geom name="pit_wall_ypos" class="collision_pit" type="box"
+            pos="0 0.0758 0.19" size="0.1247 0.010 0.19"/>
+      <geom name="pit_wall_xneg" class="collision_pit" type="box"
+            pos="-0.1147 0 0.19" size="0.010 0.0658 0.19"/>
+      <geom name="pit_wall_xpos" class="collision_pit" type="box"
+            pos="0.1147 0 0.19" size="0.010 0.0658 0.19"/>
+
+      <!-- Collision: vertical loop handle on the +X face, 3 thin capsules.
+           The OUTER BAR (grasp target) runs vertically; two horizontal risers tie it
+           back to the wall.
+
+           NOTE the collision loop is WIDER than the visual mesh handle (bar at x=0.20
+           vs visual handle ending at x~0.155): Spot's gripper jaw capsules are 30 mm
+           in diameter, so the loop's clear opening must admit a finger with margin
+           (now 0.20 - 0.008 - 0.125 = 67 mm vs 33 mm before). Renders show the jaw
+           "holding air" ~5 cm outside the visual handle; this is a deliberate
+           collision-proxy enlargement, documented in docs/water_ball_approximation.md.
+
+           condim=6 (torsional + rolling friction) with priority 8 lets a pinch
+           transmit some torque, as a real rubber-padded jaw does. -->
+      <!-- The handle is a FLAT CANTILEVER PLATE (pan-handle style): 35 mm wide, 12 mm
+           thick, extending from the wall top to x=0.205. A jaw closing vertically onto
+           it gets planar patches on both faces -- unlike a round-bar pinch, this can
+           transmit the wrist torque needed to hold a commanded pour attitude in the
+           air. The old loop (vertical bar + bottom riser) is REMOVED so the jaw can
+           approach the plate straight from +x; hooking for the move task still works
+           by catching the plate's underside. -->
+      <!-- The C-shaped handle (top arm + vertical grip segment + bottom arm) is built
+           programmatically in SpotPitMove._process_spec, parameterized by handle_style
+           ("plate" = flat vertical segment, "cylinder" = 30 mm round segment). -->
+
+      <!-- REQUIRED: shared spot_components/sensor.xml references site_object. -->
+      <site name="site_object" pos="0 0 0.19" size="0.01"/>
+      <site name="trace_pit" pos="0 0 0.19" size="0.01"/>
+
+      <!-- Grasp target (PINCH, pour task): outer end of the flat handle plate, so the
+           jaw bites the plate tip without colliding with the pitcher wall. -->
+      <site name="site_grasp_handle" pos="0.20 0 0.26" size="0.015" rgba="1 0.4 0 1"/>
+      <site name="trace_grasp_handle" pos="0.20 0 0.26" size="0.01"/>
+
+      <!-- Hook target (move task): just under the plate; lifting catches its underside. -->
+      <site name="site_hook" pos="0.1625 0 0.31" size="0.01"/>
+
+      <!-- Wall-pinch target: OUTER face of the +y wall just below the rim. Reachable
+           only by a jaw coming from OUTSIDE -- a gripper scooped inside the mouth
+           cannot get near it, which keeps the engage check honest. -->
+      <site name="site_grasp_wall" pos="0 0.0758 0.44" size="0.015" rgba="0 0.8 0.2 1"/>
+
+      <!-- Inside-expansion target: mouth center; the gripper head inserts here and
+           OPENS, jamming fingertip and palm against the opposing inner y-walls. -->
+      <site name="site_grasp_inside" pos="0 0 0.44" size="0.015" rgba="0.8 0 0.8 1"/>
+
+      <!-- STRADDLE target pairs (pour task): one target for the FINGER pad and one
+           for the PALM, on opposite sides of the material to be pinched. Satisfying
+           both simultaneously is only possible with the jaw straddling the material,
+           which implicitly forces the collision-free entry direction. -->
+      <site name="site_wall_finger" pos="0 0.036 0.35" size="0.012" rgba="0 0.8 0.2 0.7"/>
+      <site name="site_wall_palm" pos="0 0.115 0.35" size="0.012" rgba="0 0.5 0.1 0.7"/>
+      <site name="site_plate_finger" pos="0.20 -0.035 0.26" size="0.012" rgba="1 0.4 0 0.7"/>
+      <site name="site_plate_palm" pos="0.20 0.035 0.26" size="0.012" rgba="0.7 0.25 0 0.7"/>
+      <site name="site_inside_finger" pos="0 -0.04 0.30" size="0.012" rgba="0.8 0 0.8 0.7"/>
+      <site name="site_inside_palm" pos="0 0.05 0.30" size="0.012" rgba="0.5 0 0.5 0.7"/>
+
+      <!-- Approach sites around the container for torso-proximity rewards. -->
+      <site name="site_approach_left"  pos="0 -0.6 0" size="0.01"/>
+      <site name="site_approach_mid"   pos="-0.6 0 0" size="0.01"/>
+      <site name="site_approach_right" pos="0 0.6 0" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
