@@ -60,6 +60,10 @@ SPOT_TASK_NAMES = (
     "spot_tire_rack_drag",
     "spot_rugged_box_push",
     "spot_jug_kick",
+    "spot_jug_upright",
+    "spot_jug_lay_down",
+    "spot_jug_roll",
+    "spot_jug_move",
     "spot_barrel_perceive",
     "spot_barrel_look_at",
     "spot_pit_move",
@@ -86,6 +90,16 @@ from sumo.tasks.spot.spot_chair_upright import SpotChairUpright, SpotChairUprigh
 from sumo.tasks.spot.spot_cone_push import SpotConePush, SpotConePushConfig
 from sumo.tasks.spot.spot_cone_upright import SpotConeUpright, SpotConeUprightConfig
 from sumo.tasks.spot.spot_jug_kick import SpotJugKick, SpotJugKickConfig
+from sumo.tasks.spot.spot_jug_manipulation import (
+    SpotJugLayDown,
+    SpotJugLayDownConfig,
+    SpotJugMove,
+    SpotJugMoveConfig,
+    SpotJugRoll,
+    SpotJugRollConfig,
+    SpotJugUpright,
+    SpotJugUprightConfig,
+)
 from sumo.tasks.spot.spot_rack_push import SpotRackPush, SpotRackPushConfig
 from sumo.tasks.spot.spot_rack_upright import SpotRackUpright, SpotRackUprightConfig
 from sumo.tasks.spot.spot_rugged_box_push import SpotRuggedBoxPush, SpotRuggedBoxPushConfig
@@ -124,6 +138,10 @@ register_task("spot_tire_stack", SpotTireStack, SpotTireStackConfig, **_SPOT_REG
 register_task("spot_tire_rack_drag", SpotTireRackDrag, SpotTireRackDragConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_rugged_box_push", SpotRuggedBoxPush, SpotRuggedBoxPushConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_kick", SpotJugKick, SpotJugKickConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_upright", SpotJugUpright, SpotJugUprightConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_lay_down", SpotJugLayDown, SpotJugLayDownConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_roll", SpotJugRoll, SpotJugRollConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_move", SpotJugMove, SpotJugMoveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_perceive", SpotBarrelPerceive, SpotBarrelPerceiveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_look_at", SpotBarrelLookAt, SpotBarrelLookAtConfig, **_SPOT_REGISTRATION_KWARGS)
 
