@@ -38,4 +38,5 @@ def set_default_spot_optimizer_overrides() -> None:
     """Sets the default task-specific optimizer config overrides for all Spot tasks."""
     for task_name in SPOT_TASK_NAMES:
         _set_spot_optimizer_overrides(task_name)
-    set_config_overrides("spot_jug_upright", CrossEntropyMethodConfig, _SPOT_UPRIGHT_CEM)
+    for task_name in ("spot_jug_upright", "spot_jug_upright_grasp"):
+        set_config_overrides(task_name, CrossEntropyMethodConfig, _SPOT_UPRIGHT_CEM)

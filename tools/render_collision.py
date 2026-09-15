@@ -18,15 +18,13 @@ Notes:
 """
 
 import argparse
-import importlib
 from pathlib import Path
 
 import mujoco
-import numpy as np
+from judo.tasks import get_registered_tasks
 from PIL import Image
 
 import sumo.tasks  # noqa: F401 -- registers all tasks
-from judo.tasks import get_registered_tasks
 
 # Tint cycle for collision geoms so adjacent pieces are distinguishable.
 _TINTS = [

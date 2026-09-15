@@ -6,7 +6,7 @@ import mujoco
 import numpy as np
 from judo.utils.fields import np_1d_field
 
-from sumo.tasks.spot import jug_water
+from sumo.tasks.spot import jug_neck_grasp, jug_water
 from sumo.tasks.spot.look_at import object_look_term
 from sumo.tasks.spot.spot_base import SpotBase, SpotBaseConfig
 from sumo.tasks.spot.spot_constants import LEGS_STANDING_POS, STANDING_HEIGHT
@@ -16,6 +16,16 @@ from sumo.tasks.spot.spot_upright import ground_clearance_height
 
 @dataclass
 class SpotJugManipulationConfig(SpotBaseConfig):
+    # Opt-in experiment only; existing tasks and deployment defaults are unchanged.
+    neck_grasp: bool = False
+    w_neck_reach: float = 60.0
+    w_neck_alignment: float = 20.0
+    w_neck_open: float = 5.0
+    w_neck_grasp: float = 40.0
+    w_neck_false: float = 15.0
+    w_neck_straddle: float = 0.0
+    w_neck_close: float = 0.0
+    neck_grasp_fade_width: float = 1.0
     # Construction-time model parameters; rebuild the task to change these.
     water_fill_ratio: float = 0.0
     water_ball_radius: float = 0.025
@@ -145,6 +155,13 @@ class SpotJugManipulation(SpotBase):
 
     def __init__(self, config=None):
         water_config = config if config is not None else self.config_t()
+        self.neck_grasp = bool(water_config.neck_grasp)
+        if self.neck_grasp and self.mode != "upright":
+            raise ValueError("neck_grasp is an upright-only experiment")
+        if self.neck_grasp and not (
+            np.isfinite(water_config.neck_grasp_fade_width) and water_config.neck_grasp_fade_width > 0
+        ):
+            raise ValueError("neck_grasp_fade_width must be finite and positive")
         # judo's base builds the model (_process_spec) BEFORE it stores the passed config,
         # so every construction-time parameter is read from `water_config` here.
         self.jug_mass = float(water_config.jug_mass)
@@ -179,6 +196,8 @@ class SpotJugManipulation(SpotBase):
         friction[2] = self.rolling_friction
         geom.friction = friction
         geom.condim = 6
+        if self.neck_grasp:
+            jug_neck_grasp.build_neck_grasp(self.spec)
         if self.water_count:
             jug_water.configure_water_solver(self.spec)
             jug_water.add_inner_shell(self.spec, self.spec.body("jug"))
@@ -291,14 +310,23 @@ class SpotJugManipulation(SpotBase):
             "linear_velocity": -c.w_linear_velocity * (settle * np.linalg.norm(vel, axis=-1)).mean(-1),
             "angular_velocity": -c.w_angular_velocity * (settle * np.linalg.norm(omega, axis=-1)).mean(-1),
             "controls": -c.w_controls * np.linalg.norm(controls[..., :3], axis=-1).mean(-1),
-            "look": object_look_term(states[..., : self.model.nq], self.body_pose_start,
-                                     self.object_pose_start, c.w_look_object, c.look_ramp_dist),
+            "look": object_look_term(
+                states[..., : self.model.nq],
+                self.body_pose_start,
+                self.object_pose_start,
+                c.w_look_object,
+                c.look_ramp_dist,
+            ),
             "fall": -c.fall_penalty * (body[..., 2] <= c.spot_fallen_threshold).any(-1),
         }
         if self.mode == "roll":
             coupled, slip = self._roll_speeds(pos, vel, omega, axis)
             terms["roll"] = c.w_roll * (coupled * (1 - near)).mean(-1)
             terms["slip"] = -c.w_slip * slip.mean(-1)
+        if self.neck_grasp:
+            # Replace hinge-to-neck attraction with pinch-centre guidance.
+            terms["approach"] = np.zeros_like(terms["approach"])
+            terms.update(jug_neck_grasp.grasp_terms(self, states, sensors, controls))
         return terms
 
     def reward(self, states, sensors, controls, system_metadata=None):
@@ -339,6 +367,8 @@ class SpotJugManipulation(SpotBase):
             local = jug_water.ball_local_positions(self.model, data, self.water_count)
             result["water_retained_fraction"] = float(jug_water.contained_mask(local).mean())
             result["water_com_local"] = local.mean(0).tolist()
+        if self.neck_grasp:
+            result.update(jug_neck_grasp.grasp_metrics(self, data))
         return result
 
     def success(self, model, data, metadata=None):
@@ -372,6 +402,22 @@ class SpotJugUpright(SpotJugManipulation):
     name = "spot_jug_upright"
     config_t = SpotJugUprightConfig
     mode = "upright"
+
+
+@dataclass
+class SpotJugUprightGraspConfig(SpotJugUprightConfig):
+    """Upright with the explicit neck grasp (jug_neck_grasp).
+
+    Corrected neck collision geometry and pinch-centre guidance. A separate task because
+    the switch is construction-time and the deployed planner builds tasks from defaults.
+    """
+
+    neck_grasp: bool = True
+
+
+class SpotJugUprightGrasp(SpotJugUpright):
+    name = "spot_jug_upright_grasp"
+    config_t = SpotJugUprightGraspConfig
 
 
 class SpotJugLayDown(SpotJugManipulation):

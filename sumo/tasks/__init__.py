@@ -61,6 +61,7 @@ SPOT_TASK_NAMES = (
     "spot_rugged_box_push",
     "spot_jug_kick",
     "spot_jug_upright",
+    "spot_jug_upright_grasp",
     "spot_jug_lay_down",
     "spot_jug_roll",
     "spot_jug_move",
@@ -100,6 +101,8 @@ from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugRollConfig,
     SpotJugUpright,
     SpotJugUprightConfig,
+    SpotJugUprightGrasp,
+    SpotJugUprightGraspConfig,
 )
 from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook, SpotNavigateLookConfig
 from sumo.tasks.spot.spot_rack_push import SpotRackPush, SpotRackPushConfig
@@ -141,6 +144,7 @@ register_task("spot_tire_rack_drag", SpotTireRackDrag, SpotTireRackDragConfig, *
 register_task("spot_rugged_box_push", SpotRuggedBoxPush, SpotRuggedBoxPushConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_kick", SpotJugKick, SpotJugKickConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_upright", SpotJugUpright, SpotJugUprightConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_upright_grasp", SpotJugUprightGrasp, SpotJugUprightGraspConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_lay_down", SpotJugLayDown, SpotJugLayDownConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_roll", SpotJugRoll, SpotJugRollConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_move", SpotJugMove, SpotJugMoveConfig, **_SPOT_REGISTRATION_KWARGS)
