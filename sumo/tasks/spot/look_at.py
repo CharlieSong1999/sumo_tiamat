@@ -47,6 +47,15 @@ class LookAtPointFields:
     )
     w_look_point: float = 30.0      # 90 deg off costs 30 (= 0.5 m of a w_goal=60 goal)
     look_ramp_dist: float = 0.6     # m; see ramp() above
+    # Yaw-rate command floor (spot_base.yaw_command_floor): the locomotion policy ignores
+    # small yaw rates, so a commanded |wz| in [deadzone, floor) is raised to `floor`
+    # and below the deadzone it is 0. 0 = off. Values set from the 2026-09-16 sweep.
+    # Real Spot, 2026-09-14: 0.13-0.21 rad/s -> 0 deg/s, 0.26-0.31 -> 2-7 deg/s, ~0.4 turns.
+    # MuJoCo with the same policy (2026-09-16 sweep): 0.15 -> 30 %, 0.30 -> 85 %, 0.45 -> 100 %.
+    # NOT a --task-set field: the planner's rollouts and the policy node map the command
+    # independently and must agree, so it lives in the task defaults on both sides.
+    yaw_rate_min: float = 0.4
+    yaw_rate_deadzone: float = 0.1
 
 
 def heading_cos(qpos: np.ndarray, body_idx: int, target_xy: np.ndarray) -> "tuple[np.ndarray, np.ndarray]":

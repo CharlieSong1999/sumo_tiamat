@@ -36,6 +36,10 @@ class SpotJugKickConfig(SpotBaseConfig):
 
     w_tip: float = 150.0
     goal_distance_threshold: float = 0.5
+    # Yaw-rate command floor (spot_base.yaw_command_floor): the same values as the rest of
+    # the deployed nu=3 family, so a runtime switch into or out of kick keeps one mapping.
+    yaw_rate_min: float = 0.4
+    yaw_rate_deadzone: float = 0.1
     # Success when the jug's own z-axis has a world-z cosine below this (>60 deg over).
     tip_success_cos: float = 0.5
     goal_pos: np.ndarray = np_1d_field(

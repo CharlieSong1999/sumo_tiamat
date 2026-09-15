@@ -174,7 +174,31 @@ class SpotAssetMixin:
         lens.group = 3
 
 
-class SpotBase(SpotAssetMixin, _JudoSpotBase, Generic[ConfigT]):
+class YawFloorMixin:
+    """Judo's command mapping plus the yaw-rate command floor (`yaw_command_floor`).
+
+    Applied on the way into the 25-dim policy command, so the planner's rollouts and the
+    deployed policy node (which calls task_to_sim_ctrl per tick) execute the same
+    command. Put FIRST in a task's bases, ahead of the judo task class.
+    """
+
+    def task_to_sim_ctrl(self, controls: np.ndarray) -> np.ndarray:
+        out = super().task_to_sim_ctrl(controls)  # type: ignore[misc]
+        cfg = getattr(self, "config", None)
+        floor = float(getattr(cfg, "yaw_rate_min", 0.0) or 0.0)
+        if floor > 0.0:
+            dead = float(getattr(cfg, "yaw_rate_deadzone", 0.0) or 0.0)
+            # Never above the task's own hard yaw bound (spot_barrel_look_at narrows it
+            # to max_yaw_rate): a floor is a floor, not a way past the cap.
+            try:
+                cap = float(np.max(np.abs(np.asarray(self.actuator_ctrlrange)[2])))  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 -- no bounds: no cap
+                cap = float("inf")
+            out[..., 2] = yaw_command_floor(out[..., 2], min(floor, cap), dead)
+        return out
+
+
+class SpotBase(SpotAssetMixin, YawFloorMixin, _JudoSpotBase, Generic[ConfigT]):
     """Sumo SpotBase wrapper that composes local task XML with public Spot definitions."""
 
     config_t: type[ConfigT]  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -254,4 +278,23 @@ class SpotBase(SpotAssetMixin, _JudoSpotBase, Generic[ConfigT]):
         )
 
 
-__all__ = ["SPOT_HEAD_CAMERA_NAME", "SpotAssetMixin", "SpotBase", "SpotBaseConfig"]
+def yaw_command_floor(wz: np.ndarray, floor: float, deadzone: float) -> np.ndarray:
+    """|wz| below `deadzone` -> 0; otherwise |wz| is raised to at least `floor`.
+
+    The Spot locomotion policy does not turn for small yaw-rate commands: on the real
+    robot (2026-09-14) -0.13..-0.21 rad/s produced 0 deg/s and only ~0.4 rad/s turned it;
+    MuJoCo with the same policy behaves alike. A sampling planner does not see that
+    cliff as a cliff: it settles on a cheap small command that does nothing. With the
+    floor, the command the policy receives is either "do not turn" or "turn at a rate
+    that actually turns", in the rollouts and on the robot alike, and the planner's
+    choice among those is honest. Off (returned unchanged) when floor <= 0.
+    """
+    wz = np.asarray(wz, dtype=float)
+    if floor <= 0.0:
+        return wz
+    mag = np.abs(wz)
+    return np.where(mag < deadzone, 0.0, np.sign(wz) * np.maximum(mag, floor))
+
+
+__all__ = ["SPOT_HEAD_CAMERA_NAME", "SpotAssetMixin", "SpotBase", "SpotBaseConfig", "YawFloorMixin",
+           "yaw_command_floor"]

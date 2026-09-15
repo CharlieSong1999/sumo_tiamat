@@ -39,6 +39,10 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     # the heading target cannot flip around when the jug is between the feet.
     w_look_object: float = 10.0
     look_ramp_dist: float = 0.6
+    # Yaw-rate command floor, see spot_base.yaw_command_floor and look_at.LookAtPointFields
+    # (same values, same reason; not a --task-set field).
+    yaw_rate_min: float = 0.4
+    yaw_rate_deadzone: float = 0.1
     w_orientation: float = 150.0
     w_approach: float = 12.0
     w_position: float = 15.0

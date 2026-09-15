@@ -13,6 +13,7 @@ import numpy as np
 from judo.tasks.spot.spot_navigate import SpotNavigate, SpotNavigateConfig
 
 from sumo.tasks.spot.look_at import LookAtPointFields, point_look_term
+from sumo.tasks.spot.spot_base import YawFloorMixin
 
 
 @dataclass
@@ -20,7 +21,7 @@ class SpotNavigateLookConfig(LookAtPointFields, SpotNavigateConfig):
     pass
 
 
-class SpotNavigateLook(SpotNavigate):
+class SpotNavigateLook(YawFloorMixin, SpotNavigate):
     name = "spot_navigate_look"
     config_t: type[SpotNavigateLookConfig] = SpotNavigateLookConfig  # type: ignore[assignment]
     config: SpotNavigateLookConfig

@@ -24,7 +24,18 @@ def _set_spot_optimizer_overrides(task_name: str) -> None:
     set_config_overrides(task_name, MPPIConfig, _SPOT_OPTIMIZER_BASE)
 
 
+# spot_jug_upright drives the arm (nu=11) and did not converge at the deployed shape
+# (3 knots, 3 elites, noise_ramp 3.5; rehearsal 2026-09-16). Offline it succeeds at the
+# same 24 rollouts x 1 iteration with 2 elites (the 48x2 runs' top-k ratio), 4 knots,
+# sigma_min 0.12 and noise_ramp 2 (docs/jug_upright_24x1.md). Same rollout count, so the
+# per-plan cost stays that of the nu=3 family. tiamat's mpc_config declares the same
+# shape and asserts it against the built controller.
+_SPOT_UPRIGHT_CEM = {**_SPOT_OPTIMIZER_BASE, "num_nodes": 4, "num_elites": 2,
+                     "sigma_min": 0.12, "noise_ramp": 2.0}
+
+
 def set_default_spot_optimizer_overrides() -> None:
     """Sets the default task-specific optimizer config overrides for all Spot tasks."""
     for task_name in SPOT_TASK_NAMES:
         _set_spot_optimizer_overrides(task_name)
+    set_config_overrides("spot_jug_upright", CrossEntropyMethodConfig, _SPOT_UPRIGHT_CEM)

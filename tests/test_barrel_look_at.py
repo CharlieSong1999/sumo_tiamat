@@ -58,8 +58,12 @@ def test_yaw_rate_index_is_the_torso_yaw_command(task):
     u = np.zeros((1, 3))
     u[0, YAW_RATE_INDEX] = 0.3
     cmd = np.asarray(task.task_to_sim_ctrl(u)).reshape(-1)
-    assert cmd[2] == pytest.approx(0.3)
+    # 0.3 sits under the deployed yaw floor (0.4): raised, and on the yaw slot only.
+    assert cmd[2] == pytest.approx(task.config.yaw_rate_min)
     assert cmd[0] == pytest.approx(0.0) and cmd[1] == pytest.approx(0.0)
+    task.config.yaw_rate_min = 0.0
+    cmd = np.asarray(task.task_to_sim_ctrl(u)).reshape(-1)
+    assert cmd[2] == pytest.approx(0.3)                  # floor off: pass-through
 
 
 def test_heading_cos_geometry(task):

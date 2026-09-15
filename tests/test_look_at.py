@@ -151,3 +151,43 @@ def test_jug_tasks_face_the_jug_unless_it_is_underfoot():
     expected = -task.config.w_look_object * 2.0 * ramp(np.array(0.95), task.config.look_ramp_dist)
     assert look[1] == pytest.approx(expected, rel=1e-6)   # 2w at 180 deg, ramped at 0.95 m
     assert abs(look[2]) < 0.2                              # faded: jug 5 cm away
+
+
+def test_yaw_command_floor_mapping():
+    from sumo.tasks.spot.spot_base import yaw_command_floor
+
+    wz = np.array([0.0, 0.05, 0.12, 0.3, -0.2, -0.6, 0.9])
+    out = yaw_command_floor(wz, floor=0.45, deadzone=0.1)
+    assert out.tolist() == [0.0, 0.0, 0.45, 0.45, -0.45, -0.6, 0.9]
+    assert yaw_command_floor(wz, floor=0.0, deadzone=0.1).tolist() == wz.tolist()   # off
+
+
+def test_yaw_floor_reaches_the_policy_command_only_when_enabled():
+    from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook
+
+    task = SpotNavigateLook()
+    u = np.zeros((2, 3, task.nu))
+    u[..., 2] = 0.2
+    assert (task.config.yaw_rate_min, task.config.yaw_rate_deadzone) == (0.4, 0.1)   # deployed default
+    task.config.yaw_rate_min = 0.0
+    assert task.task_to_sim_ctrl(u)[..., 2].tolist() == [[0.2] * 3] * 2     # off: raw command
+    task.config.yaw_rate_min, task.config.yaw_rate_deadzone = 0.45, 0.1
+    assert task.task_to_sim_ctrl(u)[..., 2].tolist() == [[0.45] * 3] * 2
+    u[..., 2] = 0.05
+    assert task.task_to_sim_ctrl(u)[..., 2].tolist() == [[0.0] * 3] * 2
+    assert task.task_to_sim_ctrl(u)[..., 0].tolist() == [[0.0] * 3] * 2     # vx untouched
+
+
+def test_yaw_floor_never_exceeds_the_task_cap_and_kick_shares_it():
+    from sumo.tasks.spot.spot_barrel_look_at import SpotBarrelLookAt, SpotBarrelLookAtConfig
+    from sumo.tasks.spot.spot_jug_kick import SpotJugKick
+
+    capped = SpotBarrelLookAt(SpotBarrelLookAtConfig(max_yaw_rate=0.2))
+    u = np.zeros((1, 1, capped.nu))
+    u[..., 2] = 0.15
+    assert capped.task_to_sim_ctrl(u)[..., 2].item() == pytest.approx(0.2)   # floor clamped to the cap
+    kick = SpotJugKick()
+    assert (kick.config.yaw_rate_min, kick.config.yaw_rate_deadzone) == (0.4, 0.1)
+    u = np.zeros((1, 1, kick.nu))
+    u[..., 2] = 0.2
+    assert kick.task_to_sim_ctrl(u)[..., 2].item() == pytest.approx(0.4)
