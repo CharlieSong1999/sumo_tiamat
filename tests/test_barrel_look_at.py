@@ -87,8 +87,10 @@ def test_facing_the_barrel_scores_higher(task):
 def test_turning_fast_costs(task):
     sensors = np.zeros((1, 1, task.model.nsensordata))
     s = _state(task, 0.0)
-    slow = np.zeros((1, 1, task.nu)); slow[..., YAW_RATE_INDEX] = 0.1
-    fast = np.zeros((1, 1, task.nu)); fast[..., YAW_RATE_INDEX] = 0.4
+    slow = np.zeros((1, 1, task.nu))
+    slow[..., YAW_RATE_INDEX] = 0.1
+    fast = np.zeros((1, 1, task.nu))
+    fast[..., YAW_RATE_INDEX] = 0.4
     r_slow, r_fast = task.reward(s, sensors, slow)[0], task.reward(s, sensors, fast)[0]
     assert r_slow > r_fast
     assert r_slow - r_fast == pytest.approx(task.config.w_yaw_rate * 0.3)
