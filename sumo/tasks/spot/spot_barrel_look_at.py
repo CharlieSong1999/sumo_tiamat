@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from sumo.tasks.spot.look_at import ramp
 from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive, SpotBarrelPerceiveConfig
 
 YAW_RATE_INDEX = 2  # compact control = [vx, vy, wz]; see SpotBase.task_to_sim_ctrl [0:3]
@@ -55,8 +56,7 @@ class SpotBarrelLookAt(SpotBarrelPerceive):
 
     @property
     def actuator_ctrlrange(self) -> np.ndarray:
-        """The base task's bounds with the yaw-rate row narrowed to +-max_yaw_rate and,
-        under lock_xy, the vx/vy rows collapsed to [0, 0]."""
+        """Base bounds, yaw-rate row narrowed to +-max_yaw_rate, vx/vy zeroed under lock_xy."""
         limits = np.array(super().actuator_ctrlrange, dtype=float, copy=True)
         cap = float(self.config.max_yaw_rate)
         limits[YAW_RATE_INDEX] = [max(limits[YAW_RATE_INDEX, 0], -cap),
@@ -65,22 +65,34 @@ class SpotBarrelLookAt(SpotBarrelPerceive):
             limits[:YAW_RATE_INDEX] = 0.0
         return limits
 
+    def _target_delta(self, qpos: np.ndarray):
+        """(is_point, (dx, dy)) from the body to the look target.
+
+        The operator point when enabled (monitor "look at" click), else the perceived barrel.
+        """
+        b, o = self.body_pose_idx, self.barrel_pose_idx
+        p = np.asarray(self.config.look_at_pos, dtype=float)
+        if self.config.look_at_enabled and np.all(np.isfinite(p[:2])):
+            return True, (float(p[0]) - qpos[..., b], float(p[1]) - qpos[..., b + 1])
+        return False, (qpos[..., o] - qpos[..., b], qpos[..., o + 1] - qpos[..., b + 1])
+
     def heading_cos(self, qpos: np.ndarray) -> np.ndarray:
-        """cos(angle between the body's forward axis and the body->barrel direction), in
-        the ground plane. Shape = qpos.shape[:-1]. 1 = facing the barrel, -1 = facing away.
-        Standing ON the barrel (degenerate direction) reads as facing it."""
+        """cos(heading error to the barrel, or to the operator point) in the ground plane.
+
+        Shape = qpos.shape[:-1] (broadcast over the horizon). 1 = facing it, -1 = facing
+        away. Standing ON the target (degenerate direction) reads as facing it.
+        """
         b = self.body_pose_idx
         qw, qx, qy, qz = (qpos[..., b + 3], qpos[..., b + 4], qpos[..., b + 5], qpos[..., b + 6])
         # Body +x axis in the world frame, from the (w, x, y, z) quaternion.
         fx = 1.0 - 2.0 * (qy * qy + qz * qz)
         fy = 2.0 * (qx * qy + qw * qz)
         fn = np.maximum(np.hypot(fx, fy), 1e-9)
-        o = self.barrel_pose_idx
-        dx = qpos[..., o] - qpos[..., b]
-        dy = qpos[..., o + 1] - qpos[..., b + 1]
+        # Bearing from the FIRST step only (see look_at.heading_cos for why).
+        _, (dx, dy) = self._target_delta(qpos[..., :1, :])
         dn = np.hypot(dx, dy)
         cos = (fx * dx + fy * dy) / (fn * np.maximum(dn, 1e-9))
-        return np.where(dn < 1e-6, 1.0, cos)
+        return np.broadcast_to(np.where(dn < 1e-6, 1.0, cos), qpos.shape[:-1])
 
     def reward(
         self,
@@ -90,9 +102,15 @@ class SpotBarrelLookAt(SpotBarrelPerceive):
         system_metadata: dict[str, Any] | None = None,
     ) -> np.ndarray:
         """Navigate reward (inherited) - heading error to the barrel - |yaw rate|."""
-        base = super().reward(states, sensors, controls, system_metadata)
+        # navigate_reward, not the inherited reward(): the operator point is paid HERE
+        # with w_look (as the barrel is), never a second time through point_look_term.
+        base = self.navigate_reward(states, sensors, controls, system_metadata)
         qpos = states[..., : self.model.nq]
-        look_reward = -self.config.w_look * (1.0 - self.heading_cos(qpos)).mean(-1)
+        # Same distance fade as look_at.look_term, from the measured (first) step: a
+        # target under the robot is not a heading anyone can face.
+        _, d0 = self._target_delta(qpos[..., 0, :])
+        fade = ramp(np.hypot(d0[0], d0[1]), self.config.look_ramp_dist)
+        look_reward = -self.config.w_look * fade * (1.0 - self.heading_cos(qpos)).mean(-1)
         yaw_rate_reward = -self.config.w_yaw_rate * np.abs(controls[..., YAW_RATE_INDEX]).mean(-1)
         assert look_reward.shape == base.shape
         assert yaw_rate_reward.shape == base.shape

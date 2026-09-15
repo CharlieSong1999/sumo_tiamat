@@ -8,6 +8,7 @@ from judo.utils.fields import np_1d_field
 from mujoco import MjData, MjModel
 
 from sumo import MODEL_PATH
+from sumo.tasks.spot.look_at import LookAtPointFields, point_look_term
 from sumo.tasks.spot.spot_base import SpotBase, SpotBaseConfig
 from sumo.tasks.spot.spot_constants import LEGS_STANDING_POS, STANDING_HEIGHT
 
@@ -18,7 +19,7 @@ BARREL_REST_HEIGHT = 0.2415
 
 
 @dataclass
-class SpotBarrelPerceiveConfig(SpotBaseConfig):
+class SpotBarrelPerceiveConfig(LookAtPointFields, SpotBaseConfig):
     """Config for the barrel perception-replay task.
 
     Deliberately a plain navigate reward (walk toward a goal, stay standing). In the
@@ -61,7 +62,7 @@ class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
         super().__init__(model_path=XML_PATH, use_arm=False, config=config)
         self.body_pose_idx = self.get_joint_position_start_index("base")
 
-    def reward(
+    def navigate_reward(
         self,
         states: np.ndarray,
         sensors: np.ndarray,
@@ -83,6 +84,19 @@ class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
         assert spot_fallen_reward.shape == (batch_size,)
         assert goal_reward.shape == (batch_size,)
         return spot_fallen_reward + goal_reward + controls_reward
+
+    def reward(
+        self,
+        states: np.ndarray,
+        sensors: np.ndarray,
+        controls: np.ndarray,
+        system_metadata: dict[str, Any] | None = None,
+    ) -> np.ndarray:
+        """Navigate reward + the operator look-at point (off by default; yaw only)."""
+        base = self.navigate_reward(states, sensors, controls, system_metadata)
+        look_reward = point_look_term(states[..., : self.model.nq], self.body_pose_idx, self.config)
+        assert look_reward.shape == base.shape
+        return base + look_reward
 
     def success(self, model: MjModel, data: MjData, metadata: dict[str, Any] | None = None) -> bool:
         return bool(super().success(model, data, metadata))

@@ -80,8 +80,13 @@ def test_facing_the_barrel_scores_higher(task):
     r_side = task.reward(_state(task, np.pi / 2), sensors, u)[0]
     r_away = task.reward(_state(task, np.pi), sensors, u)[0]
     assert r_face > r_side > r_away
-    assert r_face - r_side == pytest.approx(task.config.w_look)       # 90 deg costs exactly w_look
-    assert r_face - r_away == pytest.approx(2 * task.config.w_look)
+    # 90 deg costs w_look, faded by the distance ramp at the barrel's (first-step) distance
+    from sumo.tasks.spot.look_at import ramp
+    q = _state(task, 0.0)[0, 0, : task.model.nq]
+    b, o = task.body_pose_idx, task.barrel_pose_idx
+    fade = ramp(np.hypot(q[o] - q[b], q[o + 1] - q[b + 1]), task.config.look_ramp_dist)
+    assert r_face - r_side == pytest.approx(task.config.w_look * fade)
+    assert r_face - r_away == pytest.approx(2 * task.config.w_look * fade)
 
 
 def test_turning_fast_costs(task):

@@ -7,6 +7,7 @@ import numpy as np
 from judo.utils.fields import np_1d_field
 
 from sumo.tasks.spot import jug_water
+from sumo.tasks.spot.look_at import object_look_term
 from sumo.tasks.spot.spot_base import SpotBase, SpotBaseConfig
 from sumo.tasks.spot.spot_constants import LEGS_STANDING_POS, STANDING_HEIGHT
 from sumo.tasks.spot.spot_jug_kick import XML_PATH
@@ -33,6 +34,11 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     # jug's speed within what the 2 s horizon can still stop, and is what a 1 m demo in a
     # small room can afford. upright/lay_down keep the base task's +-0.7.
     max_base_speed: float = 0.4
+    # Yaw-only "face the jug" term (look_at.object_look_term), faded out as the jug
+    # comes under the robot (w = w_look_object * (1 - exp(-(d/look_ramp_dist)^2))), so
+    # the heading target cannot flip around when the jug is between the feet.
+    w_look_object: float = 10.0
+    look_ramp_dist: float = 0.6
     w_orientation: float = 150.0
     w_approach: float = 12.0
     w_position: float = 15.0
@@ -281,6 +287,8 @@ class SpotJugManipulation(SpotBase):
             "linear_velocity": -c.w_linear_velocity * (settle * np.linalg.norm(vel, axis=-1)).mean(-1),
             "angular_velocity": -c.w_angular_velocity * (settle * np.linalg.norm(omega, axis=-1)).mean(-1),
             "controls": -c.w_controls * np.linalg.norm(controls[..., :3], axis=-1).mean(-1),
+            "look": object_look_term(states[..., : self.model.nq], self.body_pose_start,
+                                     self.object_pose_start, c.w_look_object, c.look_ramp_dist),
             "fall": -c.fall_penalty * (body[..., 2] <= c.spot_fallen_threshold).any(-1),
         }
         if self.mode == "roll":

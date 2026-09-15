@@ -66,6 +66,7 @@ SPOT_TASK_NAMES = (
     "spot_jug_move",
     "spot_barrel_perceive",
     "spot_barrel_look_at",
+    "spot_navigate_look",
     "spot_pit_move",
     "spot_pit_move_plant",
     "spot_pit_pour",
@@ -100,6 +101,7 @@ from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugUpright,
     SpotJugUprightConfig,
 )
+from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook, SpotNavigateLookConfig
 from sumo.tasks.spot.spot_rack_push import SpotRackPush, SpotRackPushConfig
 from sumo.tasks.spot.spot_rack_upright import SpotRackUpright, SpotRackUprightConfig
 from sumo.tasks.spot.spot_rugged_box_push import SpotRuggedBoxPush, SpotRuggedBoxPushConfig
@@ -144,6 +146,7 @@ register_task("spot_jug_roll", SpotJugRoll, SpotJugRollConfig, **_SPOT_REGISTRAT
 register_task("spot_jug_move", SpotJugMove, SpotJugMoveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_perceive", SpotBarrelPerceive, SpotBarrelPerceiveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_look_at", SpotBarrelLookAt, SpotBarrelLookAtConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_navigate_look", SpotNavigateLook, SpotNavigateLookConfig, **_SPOT_REGISTRATION_KWARGS)
 
 # Pit water-pitcher tasks: planner variants (no balls) + plant variants (with water balls).
 from sumo.tasks.spot.spot_pit_move import SpotPitMove, SpotPitMoveConfig, SpotPitMovePlant
