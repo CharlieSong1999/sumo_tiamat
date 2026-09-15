@@ -155,3 +155,21 @@ MUJOCO_GL=egl pixi run python -m tools.jug_demo spot_jug_upright \
 代码：`sumo/tasks/spot/spot_jug_manipulation.py`；运行/录制：`tools/jug_demo.py`；
 测试：`tests/test_jug_manipulation.py`。验证包含注册、reset、动作维度、reward batch 维度、
 摔倒惩罚、倒立/悬空/过快拒绝、滑动/原地转动拒绝、滚动历史与 reset 清零。
+
+## 2026-09-16 补记:真机部署默认值
+
+为上真机(部署的 planner 用默认 config 建任务,构造期参数只能改默认值),以下默认值已改,
+本文与 `jug_no_velocity.md`、`jug_water10.md` 的仿真轮次要用 `--set` 复现:
+
+| 字段 | 新默认 | 旧值(仿真轮次) | 原因 |
+|---|---|---|---|
+| `jug_mass` | 1.5 kg | 1.0(XML) | 真机 jug 装了少量石块;质量与惯量一起缩放 |
+| `rolling_friction` | 0.01 | 0.0001(XML) | 理想圆柱轻碰即滚过整个房间,planner 用同一模型也看不出问题 |
+| `max_base_speed`(roll/move) | 0.4 m/s | 0.7 | 小场地 1 m 演示;2 s 视界能刹住的桶速 |
+| roll/move 的 approach 项 | `× (1 − near)` | 常开 | jug 到 B 后方向随抖动翻转,机器人绕桶走并撞飞它(闭环 rehearsal) |
+
+```bash
+pixi run python tools/jug_demo.py spot_jug_roll --seed 0 --render \
+  --set jug_mass=1.0 --set rolling_friction=0.0001 --set max_base_speed=0.7 --out out/jug_tasks/reproduce_old
+```
+(approach 渐隐没有开关。)闭环 rehearsal 记录见 `auto_sumo/docs/GE_test/20260916_jug_roll_upright.md`。
