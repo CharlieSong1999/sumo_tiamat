@@ -9,7 +9,7 @@ from judo.utils.fields import np_1d_field
 from sumo.tasks.spot import jug_neck_grasp, jug_water
 from sumo.tasks.spot.look_at import object_look_term
 from sumo.tasks.spot.spot_base import SpotBase, SpotBaseConfig
-from sumo.tasks.spot.spot_constants import LEGS_STANDING_POS, STANDING_HEIGHT
+from sumo.tasks.spot.spot_constants import ARM_JOINT_NAMES, LEGS_STANDING_POS, STANDING_HEIGHT
 from sumo.tasks.spot.spot_jug_kick import XML_PATH
 from sumo.tasks.spot.spot_upright import ground_clearance_height
 
@@ -119,6 +119,27 @@ class SpotJugLayDownConfig(SpotJugManipulationConfig):
 
 @dataclass
 class SpotJugRollConfig(SpotJugManipulationConfig):
+    # Construction-time opt-in: keep the deployed/default roll action space at nu=3.
+    # Rebuild with True to expose the arm and gripper-selection controls (nu=11).
+    roll_use_arm: bool = False
+    # Opt-in costs on actual predicted velocities of the six arm joints (not
+    # gripper closure, base motion, or jug velocity). The peak term catches brief
+    # whips that a horizon-average cost can otherwise dilute. This is NOT a limit.
+    w_arm_speed: float = 0.0
+    w_arm_peak_speed: float = 0.0
+    arm_speed_soft_limit: float = 1.0  # rad/s, per joint
+    # Optional body-to-jug XY clearance to discourage replacing arm pushes with
+    # leg kicks when arm motion has a cost. This proxy is not contact detection.
+    w_arm_body_clearance: float = 0.0
+    arm_body_clearance: float = 0.75  # m, between base and jug centers
+    # Optional Cartesian hand guidance. Sensors have no mass/collision geometry.
+    w_hand_speed: float = 0.0
+    w_hand_peak_speed: float = 0.0
+    hand_speed_soft_limit: float = 0.35  # world-frame m/s, not a hard limit
+    w_hand_reach: float = 0.0
+    w_arm_rest: float = 0.0
+    hand_reach_backoff: float = 0.16  # hand point behind jug center, along A->B
+    hand_reach_height: float = 0.06  # above jug center
     w_position: float = 100.0
     w_approach: float = 15.0
     w_orientation: float = 40.0
@@ -198,10 +219,26 @@ class SpotJugManipulation(SpotBase):
             raise ValueError(f"arrive_ramp must be finite and > 0, got {water_config.arrive_ramp!r}")
         self.water_radius = water_config.water_ball_radius
         self.water_count, self.water_mass = jug_water.water_parameters(water_config.water_fill_ratio, self.water_radius)
+        use_arm = self.mode in ("upright", "arm_idle") or (
+            self.mode == "roll" and bool(getattr(water_config, "roll_use_arm", False))
+        )
+        if self.mode == "roll":
+            for name in (
+                "w_arm_speed", "w_arm_peak_speed", "arm_speed_soft_limit",
+                "w_arm_body_clearance", "arm_body_clearance",
+                "w_hand_speed", "w_hand_peak_speed", "hand_speed_soft_limit",
+                "w_hand_reach", "w_arm_rest", "hand_reach_backoff", "hand_reach_height",
+            ):
+                value = getattr(water_config, name)
+                if not (np.isfinite(value) and value >= 0):
+                    raise ValueError(f"{name} must be finite and nonnegative")
+        self.roll_hand_sensors = self.mode == "roll" and use_arm and any(
+            getattr(water_config, name, 0) for name in ("w_hand_speed", "w_hand_peak_speed", "w_hand_reach")
+        )
         super().__init__(
             model_path=XML_PATH,
-            use_arm=self.mode in ("upright", "arm_idle"),
-            use_gripper=self.mode in ("upright", "arm_idle"),
+            use_arm=use_arm,
+            use_gripper=use_arm,
             config=config,
         )
         self.body_pose_start = self.get_joint_position_start_index("base")
@@ -209,9 +246,30 @@ class SpotJugManipulation(SpotBase):
         self.object_vel_start = self.get_joint_velocity_start_index("jug_joint")
         self.object_z_axis_start = self.get_sensor_start_index("object_z_axis")
         self.gripper_start = self.get_sensor_start_index("sensor_arm_link_fngr")
+        self.arm_velocity_indices = np.array(
+            [self.get_joint_velocity_start_index(name) for name in ARM_JOINT_NAMES if name != "arm_f1x"]
+        )
+        self.arm_position_indices = np.array(
+            [self.get_joint_position_start_index(name) for name in ARM_JOINT_NAMES if name != "arm_f1x"]
+        )
+        if self.roll_hand_sensors:
+            self.hand_position_start = self.get_sensor_start_index("jug_roll_hand_position")
+            self.hand_velocity_start = self.get_sensor_start_index("jug_roll_hand_velocity")
 
     def _process_spec(self):
         super()._process_spec()
+        if self.roll_hand_sensors:
+            self.spec.body("arm_link_wr1").add_site(
+                name="jug_roll_hand_point", pos=[0.185, 0, -0.008], size=[0.004, 0, 0], group=3,
+            )
+            for name, kind in (
+                ("jug_roll_hand_position", mujoco.mjtSensor.mjSENS_FRAMEPOS),
+                ("jug_roll_hand_velocity", mujoco.mjtSensor.mjSENS_FRAMELINVEL),
+            ):
+                sensor = self.spec.add_sensor(name=name)
+                sensor.type = kind
+                sensor.objtype = mujoco.mjtObj.mjOBJ_SITE
+                sensor.objname = "jug_roll_hand_point"  # no reference: WORLD frame
         jug = self.spec.body("jug")
         if jug.mass <= 0:
             raise ValueError("jug body declares no mass; cannot scale it to jug_mass")
@@ -395,6 +453,34 @@ class SpotJugManipulation(SpotBase):
             terms["slip"] = -c.w_slip * slip.mean(-1)
             overspeed = np.maximum(np.linalg.norm(vel[..., :2], axis=-1) - c.roll_speed_cap, 0.0)
             terms["overspeed"] = -c.w_overspeed * overspeed.mean(-1)
+            if self.use_arm and (c.w_arm_speed or c.w_arm_peak_speed):
+                arm_velocity = states[..., self.arm_velocity_indices]
+                excess = np.maximum(np.abs(arm_velocity) - c.arm_speed_soft_limit, 0.0)
+                terms["arm_speed"] = -c.w_arm_speed * np.square(arm_velocity).sum(-1).mean(-1)
+                terms["arm_peak_speed"] = -c.w_arm_peak_speed * np.square(excess).max(axis=(-2, -1))
+            if self.use_arm and c.w_arm_body_clearance:
+                clearance_error = np.maximum(c.arm_body_clearance - body_dist, 0.0)
+                terms["arm_body_clearance"] = -c.w_arm_body_clearance * clearance_error.max(-1)
+            if self.roll_hand_sensors:
+                h = sensors[..., self.hand_position_start : self.hand_position_start + 3]
+                hv = sensors[..., self.hand_velocity_start : self.hand_velocity_start + 3]
+                excess = np.maximum(np.linalg.norm(hv, axis=-1) - c.hand_speed_soft_limit, 0.0)
+                terms["hand_speed"] = -c.w_hand_speed * np.square(excess).mean(-1)
+                terms["hand_peak_speed"] = -c.w_hand_peak_speed * np.square(excess).max(-1)
+                # This is a hand-selected approach point, not a prescribed motion
+                # or a contact constraint. Its dense gradient helps slow approaches.
+                route = np.asarray(c.goal_pos)[:2] - np.asarray(c.start_pos)[:2]
+                route = route / max(np.linalg.norm(route), 1e-8)
+                target = pos.copy()
+                target[..., :2] -= c.hand_reach_backoff * route
+                target[..., 2] += c.hand_reach_height
+                reach = np.maximum(np.linalg.norm(h - target, axis=-1) - 0.04, 0.0)
+                terms["hand_reach"] = -c.w_hand_reach * (push * reach).mean(-1)
+            if self.use_arm and c.w_arm_rest:
+                # Return softly to the existing neutral extended reset posture as
+                # the original arrival deadband turns off pushing. No mode latch.
+                error = states[..., self.arm_position_indices] - np.asarray(self.reset_arm_pos)[:6]
+                terms["arm_rest"] = -c.w_arm_rest * ((1 - push) * np.square(error).sum(-1)).mean(-1)
         if self.neck_grasp:
             # Replace hinge-to-neck attraction with pinch-centre guidance.
             terms["approach"] = np.zeros_like(terms["approach"])
@@ -543,6 +629,63 @@ class SpotJugRoll(SpotJugManipulation):
     name = "spot_jug_roll"
     config_t = SpotJugRollConfig
     mode = "roll"
+
+
+@dataclass
+class SpotJugRollArmGentleConfig(SpotJugRollConfig):
+    """Frozen deployment profile: gentle arm roll v4 with the 4 cm hand-guidance sphere.
+
+    The values are the `initial_config` of the authoritative 32x1 / 1.5 s run
+    (out/jug_roll_horizon_tradeoff_20260917/n32_h1p5/front/seed0.json; handoff in
+    auto_sumo/docs/GE_test/20260917_gentle_arm_roll_point_deployment_handoff.md §3.1),
+    pinned by tests/test_jug_roll_arm_gentle.py. A separate registered task because
+    `roll_use_arm` and `water_fill_ratio` are construction-time (nu 3 -> 11, hand
+    sensors, 19 water balls) and the deployed planner/policy build tasks from defaults.
+    `start_pos` / `goal_pos` keep the base defaults: on the robot A is the first jug
+    observation and B the operator's click (run_planner), never these offline coordinates.
+    """
+
+    roll_use_arm: bool = True
+    water_fill_ratio: float = 0.1
+    # Jug velocity costs off: the arm/hand costs below shape the push instead.
+    w_linear_velocity: float = 0.0
+    w_angular_velocity: float = 0.0
+    w_roll: float = 0.0
+    w_slip: float = 0.0
+    w_overspeed: float = 0.0
+    w_arm_speed: float = 0.5
+    w_arm_peak_speed: float = 2.0
+    w_arm_body_clearance: float = 400.0
+    w_hand_speed: float = 2.0
+    w_hand_peak_speed: float = 10.0
+    hand_speed_soft_limit: float = 0.5
+    w_hand_reach: float = 15.0
+    w_arm_rest: float = 10.0
+
+
+class SpotJugRollArmGentle(SpotJugRoll):
+    name = "spot_jug_roll_arm_gentle"
+    config_t = SpotJugRollArmGentleConfig
+
+
+@dataclass
+class SpotJugRollArmGentleDryConfig(SpotJugRollArmGentleConfig):
+    """The gentle arm-roll profile without explicit water.
+
+    Same reward and action space; the 3.4 kg total load lumped into the jug body (1.5 kg
+    jug + 1.9 kg of the wet profile's 19 balls). Registered separately because on the deployed chain
+    (2026-09-17 rehearsals) the wet profile plans at 12 Hz (75-94 ms/plan) and never
+    approaches the jug, while this one plans at 20 Hz and pushes it to B. It is a
+    different model, not a tuning of the frozen one; sloshing is not represented.
+    """
+
+    water_fill_ratio: float = 0.0
+    jug_mass: float = 3.4
+
+
+class SpotJugRollArmGentleDry(SpotJugRollArmGentle):
+    name = "spot_jug_roll_arm_gentle_dry"
+    config_t = SpotJugRollArmGentleDryConfig
 
 
 class SpotJugMove(SpotJugManipulation):

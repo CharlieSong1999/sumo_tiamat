@@ -64,3 +64,8 @@ def set_default_spot_overrides() -> None:
                 "horizon": 2.0,
             },
         )
+    # The gentle arm-roll deployment profile plans 1.5 s ahead at 32 rollouts (its
+    # authoritative 32x1 / 1.5 s run; see SpotJugRollArmGentleConfig). Set AFTER the
+    # loop so the generic 2.0 s Spot horizon does not win.
+    for task_name in ("spot_jug_roll_arm_gentle", "spot_jug_roll_arm_gentle_dry"):
+        set_config_overrides(task_name, ControllerConfig, {"horizon": 1.5})

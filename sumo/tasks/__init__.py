@@ -65,6 +65,8 @@ SPOT_TASK_NAMES = (
     "spot_jug_arm_idle",
     "spot_jug_lay_down",
     "spot_jug_roll",
+    "spot_jug_roll_arm_gentle",
+    "spot_jug_roll_arm_gentle_dry",
     "spot_jug_move",
     "spot_barrel_perceive",
     "spot_barrel_look_at",
@@ -101,6 +103,10 @@ from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugMove,
     SpotJugMoveConfig,
     SpotJugRoll,
+    SpotJugRollArmGentle,
+    SpotJugRollArmGentleConfig,
+    SpotJugRollArmGentleDry,
+    SpotJugRollArmGentleDryConfig,
     SpotJugRollConfig,
     SpotJugUpright,
     SpotJugUprightConfig,
@@ -151,6 +157,8 @@ register_task("spot_jug_upright_grasp", SpotJugUprightGrasp, SpotJugUprightGrasp
 register_task("spot_jug_arm_idle", SpotJugArmIdle, SpotJugArmIdleConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_lay_down", SpotJugLayDown, SpotJugLayDownConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_roll", SpotJugRoll, SpotJugRollConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_roll_arm_gentle", SpotJugRollArmGentle, SpotJugRollArmGentleConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_jug_roll_arm_gentle_dry", SpotJugRollArmGentleDry, SpotJugRollArmGentleDryConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_jug_move", SpotJugMove, SpotJugMoveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_perceive", SpotBarrelPerceive, SpotBarrelPerceiveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_look_at", SpotBarrelLookAt, SpotBarrelLookAtConfig, **_SPOT_REGISTRATION_KWARGS)
