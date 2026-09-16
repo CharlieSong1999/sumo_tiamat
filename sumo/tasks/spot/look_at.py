@@ -56,6 +56,19 @@ class LookAtPointFields:
     # independently and must agree, so it lives in the task defaults on both sides.
     yaw_rate_min: float = 0.4
     yaw_rate_deadzone: float = 0.1
+    # Planar-speed deadband (spot_base.YawFloorMixin): a commanded |(vx, vy)| below this is
+    # sent as 0. Real Spot 2026-09-15: CEM noise of 0.05-0.2 m/s around a held goal does not
+    # move the body but starts a gait (legs lift and shuffle); zeros stand still.
+    xy_speed_deadzone: float = 0.08
+    # Yaw deadband while NO look-at point is set (tasks with yaw_floor_enabled = False): the
+    # floor is off, and any |wz| under the robot's own turning threshold (~0.3 rad/s,
+    # 2026-09-14) only twitches the legs. 2026-09-15 roll4: CEM yaw noise of 0.1-0.3 rad/s
+    # walked the heading 33 deg in 20 s of "holding".
+    yaw_rate_hold_deadzone: float = 0.3
+    # Yaw command cost while holding (no look-at point; tasks with yaw_floor_enabled = False):
+    # CEM's yaw noise above the hold deadband would still turn the robot now and then
+    # (roll4: 10 % of samples over 0.3 rad/s). With a point set this is 0: steering pays.
+    w_yaw_hold: float = 10.0
 
 
 def heading_cos(qpos: np.ndarray, body_idx: int, target_xy: np.ndarray) -> "tuple[np.ndarray, np.ndarray]":

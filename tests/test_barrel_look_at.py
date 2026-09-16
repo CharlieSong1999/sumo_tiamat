@@ -102,6 +102,7 @@ def test_turning_fast_costs(task):
     fast[..., YAW_RATE_INDEX] = 0.4
     r_slow, r_fast = task.reward(s, sensors, slow)[0], task.reward(s, sensors, fast)[0]
     assert r_slow > r_fast
+    # w_yaw_rate on the yaw command only: the base task's control cost is on (vx, vy)
     assert r_slow - r_fast == pytest.approx(task.config.w_yaw_rate * 0.3)
 
 
@@ -112,3 +113,20 @@ def test_reward_shape(task):
     sensors = rng.normal(size=(batch, horizon, task.model.nsensordata))
     controls = rng.normal(size=(batch, horizon, task.nu))
     assert task.reward(states, sensors, controls).shape == (batch,)
+
+
+def test_yaw_floor_is_a_static_per_task_property():
+    """The mapping must not depend on operator state the policy never sees.
+
+    codex 2026-09-15: perceive (the waiting task) always uses the hold deadband,
+    navigate_look always the floor.
+    """
+    from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook
+    u = np.zeros((1, 3))
+    u[0, YAW_RATE_INDEX] = 0.18
+    perceive, look = SpotBarrelPerceive(), SpotNavigateLook()
+    for enabled in (False, True):
+        perceive.config.look_at_enabled = look.config.look_at_enabled = enabled
+        assert np.asarray(perceive.task_to_sim_ctrl(u)).reshape(-1)[2] == pytest.approx(0.0)
+        assert np.asarray(look.task_to_sim_ctrl(u)).reshape(-1)[2] == pytest.approx(look.config.yaw_rate_min)
+    assert SpotBarrelLookAt.yaw_floor_enabled is True and SpotBarrelPerceive.yaw_floor_enabled is False

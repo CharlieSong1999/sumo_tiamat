@@ -27,6 +27,11 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     w_neck_close: float = 0.0
     neck_grasp_fade_width: float = 1.0
     # Construction-time model parameters; rebuild the task to change these.
+    # Water balls are opt-in (rebuild to change). The planner can place them inside the
+    # perceived jug (synthesize_qpos), but five 2.5 cm balls (0.026 = ~0.5 kg, the stones
+    # in the real jug) cost 93 ms per plan instead of 30 in the 2026-09-15 rehearsal --
+    # the CG/sparse solver they need -- and the deployed loop has a 150 ms budget. Until
+    # the budget allows it the stones stay lumped into jug_mass.
     water_fill_ratio: float = 0.0
     water_ball_radius: float = 0.025
     # Total jug mass, kg. The tracking mesh's XML declares 1.0 kg (a near-empty 18.9 L
@@ -43,7 +48,7 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     # Base-velocity cap (m/s) for the pushing modes (roll/move): a slower push keeps the
     # jug's speed within what the 2 s horizon can still stop, and is what a 1 m demo in a
     # small room can afford. upright/lay_down keep the base task's +-0.7.
-    max_base_speed: float = 0.4
+    max_base_speed: float = 0.3
     # Yaw-only "face the jug" term (look_at.object_look_term), faded out as the jug
     # comes under the robot (w = w_look_object * (1 - exp(-(d/look_ramp_dist)^2))), so
     # the heading target cannot flip around when the jug is between the feet.
@@ -53,6 +58,7 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     # (same values, same reason; not a --task-set field).
     yaw_rate_min: float = 0.4
     yaw_rate_deadzone: float = 0.1
+    xy_speed_deadzone: float = 0.08   # see look_at.LookAtPointFields
     w_orientation: float = 150.0
     w_approach: float = 12.0
     w_position: float = 15.0
@@ -61,6 +67,18 @@ class SpotJugManipulationConfig(SpotBaseConfig):
     w_controls: float = 0.3
     w_height: float = 100.0
     position_tolerance: float = 0.35
+    # Arrival deadband for the pushing modes (roll/move): with the jug within
+    # arrive_tolerance of goal_pos the position term is flat, approach/roll are off and a
+    # standoff term keeps the body >= standoff_dist from the jug. Real robot 2026-09-15:
+    # a hold (goal frozen ON the jug) plus 17 cm of perception drift became a "roll 17 cm
+    # in a noise-defined direction" and the robot kicked the jug 1.1 m.
+    arrive_tolerance: float = 0.25
+    # The push terms come back gradually over arrive_ramp past the tolerance: a jug that
+    # overshoots B by a few cm gets a weak pull, not a full re-approach from the far side
+    # (rehearsal 2026-09-15: a 2 cm overshoot sent the robot around the jug to push it back).
+    arrive_ramp: float = 0.3
+    standoff_dist: float = 0.6
+    w_standoff: float = 40.0
     angle_tolerance_deg: float = 15.0
     linear_speed_tolerance: float = 0.15
     angular_speed_tolerance: float = 0.6
@@ -106,6 +124,11 @@ class SpotJugRollConfig(SpotJugManipulationConfig):
     w_orientation: float = 40.0
     w_roll: float = 25.0
     w_slip: float = 4.0
+    # Rolling faster than this earns nothing, and jug speed above it costs w_overspeed
+    # per m/s: a jug kicked to 0.75 m/s rolls 2 m past B on rolling friction 0.01
+    # (rehearsal 2026-09-15; real robot the same day: one contact sent it 1.1 m).
+    roll_speed_cap: float = 0.3
+    w_overspeed: float = 40.0
     radius: float = 0.14
     min_roll_distance: float = 0.5
     goal_pos: np.ndarray = np_1d_field(
@@ -143,7 +166,7 @@ def disable_velocity_rewards(config):
 
     Success thresholds and the base-command regularizer are unchanged.
     """
-    for name in ("w_linear_velocity", "w_angular_velocity", "w_roll", "w_slip"):
+    for name in ("w_linear_velocity", "w_angular_velocity", "w_roll", "w_slip", "w_overspeed"):
         if hasattr(config, name):
             setattr(config, name, 0.0)
 
@@ -170,10 +193,16 @@ class SpotJugManipulation(SpotBase):
             raise ValueError(f"jug_mass must be finite and positive, got {water_config.jug_mass!r}")
         if not (np.isfinite(self.rolling_friction) and self.rolling_friction >= 0):
             raise ValueError(f"rolling_friction must be finite and >= 0, got {water_config.rolling_friction!r}")
+        ramp = float(getattr(water_config, "arrive_ramp", 1.0))
+        if not (np.isfinite(ramp) and ramp > 0):
+            raise ValueError(f"arrive_ramp must be finite and > 0, got {water_config.arrive_ramp!r}")
         self.water_radius = water_config.water_ball_radius
         self.water_count, self.water_mass = jug_water.water_parameters(water_config.water_fill_ratio, self.water_radius)
         super().__init__(
-            model_path=XML_PATH, use_arm=self.mode == "upright", use_gripper=self.mode == "upright", config=config
+            model_path=XML_PATH,
+            use_arm=self.mode in ("upright", "arm_idle"),
+            use_gripper=self.mode in ("upright", "arm_idle"),
+            config=config,
         )
         self.body_pose_start = self.get_joint_position_start_index("base")
         self.object_pose_start = self.get_joint_position_start_index("jug_joint")
@@ -240,6 +269,34 @@ class SpotJugManipulation(SpotBase):
         particles = np.column_stack([positions, np.tile([1, 0, 0, 0], (self.water_count, 1))])
         return np.r_[base, particles.ravel()]
 
+    @property
+    def synthesized_joints(self) -> tuple[str, ...]:
+        """Free joints the planner cannot observe and must fill from the jug's pose (water)."""
+        return tuple(f"jug_water_{i}_joint" for i in range(self.water_count))
+
+    def synthesize_qpos(self, qpos: np.ndarray) -> None:
+        """Fill the water balls' qpos in place from the jug's free-joint qpos (sumo_server.scene).
+
+        The balls are put where settled water would sit for the jug's current
+        orientation (jug_water.pooled_local_positions); their quaternions are identity.
+        """
+        if not self.water_count:
+            return
+        o = self.object_pose_start
+        jug_pos, jug_quat = qpos[o : o + 3], np.array(qpos[o + 3 : o + 7], dtype=float)
+        norm = float(np.linalg.norm(jug_quat))
+        if not np.isfinite(norm) or norm < 1e-6:
+            raise ValueError(f"jug quaternion {jug_quat.tolist()} is degenerate; cannot place the water")
+        jug_quat = jug_quat / norm
+        local = jug_water.pooled_local_positions(self.water_count, self.water_radius, jug_quat)
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, np.asarray(jug_quat, dtype=float))
+        world = local @ rot.reshape(3, 3).T + jug_pos
+        for i, name in enumerate(self.synthesized_joints):
+            adr = self.model.jnt_qposadr[self.model.joint(name).id]
+            qpos[adr : adr + 3] = world[i]
+            qpos[adr + 3 : adr + 7] = [1.0, 0.0, 0.0, 0.0]
+
     def reset(self):
         self._last_metric_time = 0.0
         self.rolling_distance = 0.0
@@ -263,7 +320,8 @@ class SpotJugManipulation(SpotBase):
         rolling_velocity = self.config.radius * omega[..., 2, None] * np.cross(axis, [0.0, 0.0, 1.0])
         spin_forward = np.sum(rolling_velocity[..., :2] * direction, axis=-1)
         grounded = (pos[..., 2] < 0.20) & (np.abs(axis[..., 2]) < 0.3)
-        coupled = np.where(grounded, np.clip(np.minimum(forward, spin_forward), 0, 1), 0.0)
+        cap = float(getattr(self.config, "roll_speed_cap", 1.0))
+        coupled = np.where(grounded, np.clip(np.minimum(forward, spin_forward), 0, cap), 0.0)
         slip = np.linalg.norm(vel[..., :2] - rolling_velocity[..., :2], axis=-1)
         return coupled, slip
 
@@ -279,6 +337,14 @@ class SpotJugManipulation(SpotBase):
         )
         near = np.exp(-np.square(distance / c.position_tolerance))
         settle = aligned * near
+        pushing = self.mode in ("roll", "move")
+        # Arrival deadband (pushing modes): flat position cost inside arrive_tolerance and
+        # a per-step gate that switches the push terms off / the standoff on.
+        if pushing:
+            push = np.clip((distance - c.arrive_tolerance) / c.arrive_ramp, 0.0, 1.0)   # 0 arrived .. 1 pushing
+            position_cost = np.maximum(distance - c.arrive_tolerance, 0.0)
+        else:
+            push, position_cost = np.ones_like(distance), distance
         if self.mode == "lay_down":
             # Penalize the incoming impact too, before the jug reaches horizontal.
             settle = np.ones_like(cos)
@@ -298,13 +364,13 @@ class SpotJugManipulation(SpotBase):
                 # the jug and into it (rehearsal 2026-09-16: jug parked at B, then kicked
                 # 8 m away). Fade the standoff term out as the jug arrives; the settle terms
                 # and the control cost take over.
-                approach = approach * (1.0 - near)
+                approach = approach * (1.0 - near) * push
             else:
                 approach = np.linalg.norm(body[..., :2] - pos[..., :2], axis=-1) * np.abs(cos)
             height_error = np.maximum(pos[..., 2] - 0.17, 0)
         terms = {
             "orientation": -c.w_orientation * orientation.mean(-1),
-            "position": -c.w_position * distance.mean(-1),
+            "position": -c.w_position * position_cost.mean(-1),
             "approach": -c.w_approach * approach.mean(-1),
             "height": -c.w_height * height_error.mean(-1),
             "linear_velocity": -c.w_linear_velocity * (settle * np.linalg.norm(vel, axis=-1)).mean(-1),
@@ -319,10 +385,16 @@ class SpotJugManipulation(SpotBase):
             ),
             "fall": -c.fall_penalty * (body[..., 2] <= c.spot_fallen_threshold).any(-1),
         }
+        if pushing:
+            body_dist = np.linalg.norm(body[..., :2] - pos[..., :2], axis=-1)
+            standoff = np.maximum(c.standoff_dist - body_dist, 0.0) * (1.0 - push)
+            terms["standoff"] = -c.w_standoff * standoff.mean(-1)
         if self.mode == "roll":
             coupled, slip = self._roll_speeds(pos, vel, omega, axis)
-            terms["roll"] = c.w_roll * (coupled * (1 - near)).mean(-1)
+            terms["roll"] = c.w_roll * (coupled * (1 - near) * push).mean(-1)
             terms["slip"] = -c.w_slip * slip.mean(-1)
+            overspeed = np.maximum(np.linalg.norm(vel[..., :2], axis=-1) - c.roll_speed_cap, 0.0)
+            terms["overspeed"] = -c.w_overspeed * overspeed.mean(-1)
         if self.neck_grasp:
             # Replace hinge-to-neck attraction with pinch-centre guidance.
             terms["approach"] = np.zeros_like(terms["approach"])
@@ -330,10 +402,29 @@ class SpotJugManipulation(SpotBase):
         return terms
 
     def reward(self, states, sensors, controls, system_metadata=None):
+        if self.mode == "arm_idle":
+            return self._arm_idle_reward(states, controls)
         total = np.zeros(states.shape[0])
         for term in self.reward_terms(states, sensors, controls, system_metadata).values():
             total += term
         return total
+
+    def _arm_idle_reward(self, states, controls):
+        """Stand where the goal is, arm stowed, hands off the jug.
+
+        The neutral member of the nu=11 family. The policy node is launched on it and the operator switches to
+        spot_jug_upright / spot_jug_upright_grasp from the monitor (the policy honours
+        switches only within one nu). Nothing here reads the jug.
+        """
+        c = self.config
+        qpos = states[..., : self.model.nq]
+        body = qpos[..., self.body_pose_start : self.body_pose_start + 3]
+        arm = qpos[..., self.body_pose_start + 7 + 12 : self.body_pose_start + 7 + 19]
+        goal = -c.w_goal * np.linalg.norm(body - np.asarray(c.goal_pos)[None, None], axis=-1).mean(-1)
+        stow = -c.w_arm_stow * np.square(arm - np.asarray(self.reset_arm_pos)[None, None]).sum(-1).mean(-1)
+        fall = -c.fall_penalty * (body[..., 2] <= c.spot_fallen_threshold).any(-1)
+        ctrl = -c.w_controls * np.linalg.norm(controls[..., :3], axis=-1).mean(-1)
+        return goal + stow + fall + ctrl
 
     def post_sim_step(self):
         # Idempotent: hierarchical backend also calls this before updating data.
@@ -402,6 +493,28 @@ class SpotJugUpright(SpotJugManipulation):
     name = "spot_jug_upright"
     config_t = SpotJugUprightConfig
     mode = "upright"
+
+
+@dataclass
+class SpotJugArmIdleConfig(SpotJugManipulationConfig):
+    """Neutral nu=11 task: hold position, arm at its stowed pose."""
+
+    w_arm_stow: float = 20.0
+    w_controls: float = 0.3
+    goal_pos: np.ndarray = np_1d_field(
+        np.array([0.0, 0.0, STANDING_HEIGHT]),
+        names=["x", "y", "z"],
+        mins=[-5.0, -5.0, 0.0],
+        maxs=[5.0, 5.0, 3.0],
+        vis_name="goal_pos",
+        xyz_vis_indices=[0, 1, None],
+    )
+
+
+class SpotJugArmIdle(SpotJugManipulation):
+    name = "spot_jug_arm_idle"
+    config_t = SpotJugArmIdleConfig
+    mode = "arm_idle"
 
 
 @dataclass

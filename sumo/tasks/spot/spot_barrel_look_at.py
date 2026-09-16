@@ -46,6 +46,8 @@ class SpotBarrelLookAtConfig(SpotBarrelPerceiveConfig):
 class SpotBarrelLookAt(SpotBarrelPerceive):
     """Perceived-barrel scene whose reward wants the robot facing the barrel, turning slowly."""
 
+    yaw_floor_enabled: bool = True   # always steers at the barrel
+
     name = "spot_barrel_look_at"
     config_t: type[SpotBarrelLookAtConfig] = SpotBarrelLookAtConfig
     config: SpotBarrelLookAtConfig

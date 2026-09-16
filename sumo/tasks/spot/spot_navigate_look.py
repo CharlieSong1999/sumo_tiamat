@@ -18,13 +18,17 @@ from sumo.tasks.spot.spot_base import YawFloorMixin
 
 @dataclass
 class SpotNavigateLookConfig(LookAtPointFields, SpotNavigateConfig):
-    pass
+    # Flat-bottomed goal well and a control cost, as in spot_barrel_perceive: this is the
+    # task the robot waits in, and waiting must be a zero command, not a 0.1 m/s shuffle.
+    goal_tolerance: float = 0.10
+    w_controls: float = 10.0   # on (vx, vy) only; yaw is handled by the command deadbands
 
 
 class SpotNavigateLook(YawFloorMixin, SpotNavigate):
     name = "spot_navigate_look"
     config_t: type[SpotNavigateLookConfig] = SpotNavigateLookConfig  # type: ignore[assignment]
     config: SpotNavigateLookConfig
+    yaw_floor_enabled: bool = True   # steering task: floor always on (both sides agree statically)
 
     def __init__(self, config: "SpotNavigateLookConfig | None" = None) -> None:
         super().__init__(config=config)
@@ -36,7 +40,17 @@ class SpotNavigateLook(YawFloorMixin, SpotNavigate):
         controls: np.ndarray,
         system_metadata: "dict[str, Any] | None" = None,
     ) -> np.ndarray:
-        base = super().reward(states, sensors, controls, system_metadata)
-        look = point_look_term(states[..., : self.model.nq], self.body_pose_idx, self.config)
-        assert look.shape == base.shape
-        return base + look
+        # judo's SpotNavigate reward with the goal well (judo's own has no tolerance).
+        c = self.config
+        qpos = states[..., : self.model.nq]
+        body_height = qpos[..., self.body_pose_idx + 2]
+        body_pos = qpos[..., self.body_pose_idx : self.body_pose_idx + 3]
+        fallen = -c.fall_penalty * (body_height <= c.spot_fallen_threshold).any(axis=-1)
+        goal_dist = np.linalg.norm(body_pos - np.asarray(c.goal_pos)[None, None], axis=-1)
+        goal = -c.w_goal * np.maximum(goal_dist - c.goal_tolerance, 0.0).mean(-1)
+        ctrl = -c.w_controls * np.linalg.norm(controls[..., :2], axis=-1).mean(-1)
+        if not c.look_at_enabled:   # holding: yaw commands are noise, make them cost
+            ctrl = ctrl - c.w_yaw_hold * np.abs(controls[..., 2]).mean(-1)
+        look = point_look_term(qpos, self.body_pose_idx, c)
+        assert look.shape == goal.shape == fallen.shape
+        return fallen + goal + ctrl + look

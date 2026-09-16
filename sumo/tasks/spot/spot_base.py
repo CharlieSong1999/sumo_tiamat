@@ -182,10 +182,27 @@ class YawFloorMixin:
     command. Put FIRST in a task's bases, ahead of the judo task class.
     """
 
+    # False: this task waits (spot_barrel_perceive): no floor, and |wz| under
+    # config.yaw_rate_hold_deadzone is sent as 0. True: the task steers a heading (barrel
+    # look_at, navigate_look, the jug tasks' object look term): floor on. A CLASS attribute,
+    # not runtime state: the planner's rollouts and the policy node's own task instance map
+    # the same command only if nothing about the mapping depends on an operator message
+    # the policy never sees (codex review 2026-09-15).
+    yaw_floor_enabled: bool = True
+
     def task_to_sim_ctrl(self, controls: np.ndarray) -> np.ndarray:
         out = super().task_to_sim_ctrl(controls)  # type: ignore[misc]
         cfg = getattr(self, "config", None)
         floor = float(getattr(cfg, "yaw_rate_min", 0.0) or 0.0)
+        # Tasks that only steer the heading on request (perceive, navigate_look) floor
+        # only while a look-at point is set. Real robot 2026-09-15: with the floor always
+        # on, CEM's yaw noise (|wz| p90 0.18) was raised to 0.4 rad/s and the robot
+        # twisted 25-30 % of the time while it was meant to stand still.
+        if not self.yaw_floor_enabled:
+            floor = 0.0
+            hold_dead = float(getattr(cfg, "yaw_rate_hold_deadzone", 0.0) or 0.0)
+            if hold_dead > 0.0:   # waiting task: sub-threshold yaw is noise, send 0
+                out[..., 2] = np.where(np.abs(out[..., 2]) < hold_dead, 0.0, out[..., 2])
         if floor > 0.0:
             dead = float(getattr(cfg, "yaw_rate_deadzone", 0.0) or 0.0)
             # Never above the task's own hard yaw bound (spot_barrel_look_at narrows it
@@ -195,6 +212,13 @@ class YawFloorMixin:
             except Exception:  # noqa: BLE001 -- no bounds: no cap
                 cap = float("inf")
             out[..., 2] = yaw_command_floor(out[..., 2], min(floor, cap), dead)
+        xy_dead = float(getattr(cfg, "xy_speed_deadzone", 0.0) or 0.0)
+        if xy_dead > 0.0:
+            # Below the deadband both planar components go to 0 together (a direction
+            # with no magnitude is noise), so a held goal is held with a zero command.
+            small = np.hypot(out[..., 0], out[..., 1]) < xy_dead
+            out[..., 0] = np.where(small, 0.0, out[..., 0])
+            out[..., 1] = np.where(small, 0.0, out[..., 1])
         return out
 
 

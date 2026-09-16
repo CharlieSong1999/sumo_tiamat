@@ -169,6 +169,7 @@ def test_yaw_floor_reaches_the_policy_command_only_when_enabled():
     u = np.zeros((2, 3, task.nu))
     u[..., 2] = 0.2
     assert (task.config.yaw_rate_min, task.config.yaw_rate_deadzone) == (0.4, 0.1)   # deployed default
+    assert task.task_to_sim_ctrl(u)[..., 2].tolist() == [[0.4] * 3] * 2     # navigate_look: floor, point or not
     task.config.yaw_rate_min = 0.0
     assert task.task_to_sim_ctrl(u)[..., 2].tolist() == [[0.2] * 3] * 2     # off: raw command
     task.config.yaw_rate_min, task.config.yaw_rate_deadzone = 0.45, 0.1
@@ -191,3 +192,68 @@ def test_yaw_floor_never_exceeds_the_task_cap_and_kick_shares_it():
     u = np.zeros((1, 1, kick.nu))
     u[..., 2] = 0.2
     assert kick.task_to_sim_ctrl(u)[..., 2].item() == pytest.approx(0.4)
+
+
+def _standing_state(task, xy):
+    q = np.array(task.reset_pose, dtype=float)
+    b = task.body_pose_idx
+    q[b : b + 3] = [xy[0], xy[1], 0.52]
+    q[b + 3 : b + 7] = [1.0, 0.0, 0.0, 0.0]
+    return np.concatenate([q, np.zeros(task.model.nv)])[None, None, :]
+
+
+def test_hold_tasks_have_a_flat_goal_well_and_prefer_zero_commands():
+    """Real robot 2026-09-15: a 7 cm goal offset kept the legs shuffling at 0.1 m/s commands."""
+    from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive
+    from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook
+
+    for task in (SpotBarrelPerceive(), SpotNavigateLook()):
+        task.config.goal_pos = np.array([0.0, 0.0, 0.52])
+        sensors = np.zeros((1, 1, task.model.nsensordata))
+        zero = np.zeros((1, 1, task.nu))
+        r_on = task.reward(_standing_state(task, (0.0, 0.0)), sensors, zero)[0]
+        r_7cm = task.reward(_standing_state(task, (0.07, 0.0)), sensors, zero)[0]
+        r_20cm = task.reward(_standing_state(task, (0.20, 0.0)), sensors, zero)[0]
+        assert r_7cm == pytest.approx(r_on)                                   # inside the well: flat
+        assert r_on - r_20cm == pytest.approx(task.config.w_goal * 0.10)      # outside: full gradient past 10 cm
+        small = np.zeros((1, 1, task.nu))
+        small[..., :2] = 0.1
+        assert r_7cm - task.reward(_standing_state(task, (0.07, 0.0)), sensors, small)[0] == pytest.approx(
+            task.config.w_controls * np.hypot(0.1, 0.1))                        # planar commands cost
+        yaw_only = np.zeros((1, 1, task.nu))
+        yaw_only[..., 2] = 0.3
+        r_yaw = task.reward(_standing_state(task, (0.07, 0.0)), sensors, yaw_only)[0]
+        assert r_7cm - r_yaw == pytest.approx(task.config.w_yaw_hold * 0.3)      # holding: yaw costs
+        task.config.look_at_enabled = True                                        # point set: yaw is free
+        r_on_pt = task.reward(_standing_state(task, (0.07, 0.0)), sensors, zero)[0]
+        r_yaw_pt = task.reward(_standing_state(task, (0.07, 0.0)), sensors, yaw_only)[0]
+        assert r_yaw_pt == pytest.approx(r_on_pt)
+        task.config.look_at_enabled = False
+
+
+def test_hold_yaw_deadband_on_the_waiting_task():
+    from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive
+    from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook
+
+    u = np.zeros((2, 3))
+    u[0, 2], u[1, 2] = 0.25, -0.35
+    out = np.asarray(SpotBarrelPerceive().task_to_sim_ctrl(u))
+    assert out[:, 2].tolist() == pytest.approx([0.0, -0.35])               # waiting: under 0.3 is noise
+    out = np.asarray(SpotNavigateLook().task_to_sim_ctrl(u))
+    assert out[:, 2].tolist() == pytest.approx([0.4, -0.4])                # steering: floored
+
+
+def test_planar_speed_deadband_reaches_the_policy_command():
+    from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive
+    from sumo.tasks.spot.spot_jug_manipulation import SpotJugRoll
+
+    for task in (SpotBarrelPerceive(), SpotJugRoll()):
+        assert task.config.xy_speed_deadzone == 0.08
+        u = np.zeros((3, task.nu))
+        u[0, :2] = (0.03, 0.03)      # |v| 0.042: noise -> both zero
+        u[1, :2] = (0.10, 0.00)      # above: untouched
+        u[2, :2] = (0.06, 0.06)      # |v| 0.085: kept
+        out = np.asarray(task.task_to_sim_ctrl(u))
+        assert out[0, :2].tolist() == [0.0, 0.0]
+        assert out[1, :2].tolist() == pytest.approx([0.10, 0.0])
+        assert out[2, :2].tolist() == pytest.approx([0.06, 0.06])

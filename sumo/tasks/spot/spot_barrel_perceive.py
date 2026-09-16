@@ -37,6 +37,13 @@ class SpotBarrelPerceiveConfig(LookAtPointFields, SpotBaseConfig):
         vis_name="goal_pos",
         xyz_vis_indices=[0, 1, None],
     )
+    # Flat-bottomed goal well: no goal gradient within goal_tolerance of goal_pos, so a
+    # held position a few cm off (the goal anchors while the robot is still standing up;
+    # odometry drifts) is not served with 0.1 m/s commands the real robot cannot execute
+    # (2026-09-15: a 7 cm offset kept the legs shuffling). w_controls then makes zero the
+    # optimum inside the well (judo's default is 0).
+    goal_tolerance: float = 0.10
+    w_controls: float = 10.0   # on (vx, vy) only; yaw is handled by the command deadbands
 
 
 class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
@@ -57,6 +64,10 @@ class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
 
     # Supplied by perception every tick; consumed by sumo_server.scene.SceneLayout.from_task.
     perceived_object_joints: tuple[str, ...] = ("barrel_joint",)
+    # The waiting task: no yaw floor, hold deadband instead (a look-at point set here still
+    # steers, but only with commands the robot executes unaided). Use spot_navigate_look
+    # for precise heading control.
+    yaw_floor_enabled: bool = False
 
     def __init__(self, config: SpotBarrelPerceiveConfig | None = None) -> None:
         super().__init__(model_path=XML_PATH, use_arm=False, config=config)
@@ -76,10 +87,11 @@ class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
         body_pos = qpos[..., self.body_pose_idx : self.body_pose_idx + 3]
 
         spot_fallen_reward = -self.config.fall_penalty * (body_height <= self.config.spot_fallen_threshold).any(axis=-1)
-        goal_reward = -self.config.w_goal * np.linalg.norm(
-            body_pos - np.asarray(self.config.goal_pos)[None, None], axis=-1
-        ).mean(-1)
-        controls_reward = -self.config.w_controls * np.linalg.norm(controls, axis=-1).mean(-1)
+        goal_dist = np.linalg.norm(body_pos - np.asarray(self.config.goal_pos)[None, None], axis=-1)
+        goal_reward = -self.config.w_goal * np.maximum(goal_dist - self.config.goal_tolerance, 0.0).mean(-1)
+        controls_reward = -self.config.w_controls * np.linalg.norm(controls[..., :2], axis=-1).mean(-1)
+        if not self.yaw_floor_enabled and not self.config.look_at_enabled:
+            controls_reward = controls_reward - self.config.w_yaw_hold * np.abs(controls[..., 2]).mean(-1)
 
         assert spot_fallen_reward.shape == (batch_size,)
         assert goal_reward.shape == (batch_size,)

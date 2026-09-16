@@ -131,6 +131,47 @@ def settled_positions(count, radius, mass, quat):
     return data.qpos.reshape(-1, 7)[:, :3].copy()
 
 
+def pooled_local_positions(count, radius, quat_wxyz):
+    """Where settled water sits for a jug at this orientation, in the jug's local frame.
+
+    Analytic stand-in for `settled_positions` when the jug pose comes from perception at
+    20 Hz and a physics settle per tick is not affordable: the balls line up on the
+    cavity wall at the lowest point under gravity, in a row perpendicular to gravity.
+    Lying jug: a row along the axis on the bottom wall. Upright jug: a row across the
+    bottom. Good enough to put the mass where it is; the rollouts slosh it from there.
+    """
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, np.asarray(quat_wxyz, dtype=float))
+    rot = rot.reshape(3, 3)
+    u = rot.T @ np.array([0.0, 0.0, -1.0])            # gravity in the jug frame
+    u = u / max(np.linalg.norm(u), 1e-9)
+    (z_bot, wall), (z_top, _), *_ = PROFILE            # cylindrical part of the cavity
+    z_mid = 0.5 * (z_bot + z_top)
+    radial = np.hypot(u[0], u[1])
+    t = wall / radial if radial > 1e-6 else np.inf     # distance to the side wall along u
+    if u[2] < -1e-6:
+        t = min(t, (z_mid - z_bot) / -u[2])            # ... or to the bottom
+    elif u[2] > 1e-6:
+        t = min(t, (z_top - z_mid) / u[2])             # ... or to the top
+    center = np.array([0.0, 0.0, z_mid]) + u * (t - radius)
+    d = np.array([0.0, 0.0, 1.0]) - u[2] * u          # row direction: perpendicular to gravity
+    if np.linalg.norm(d) < 1e-6:                       # upright: any radial direction
+        d = np.array([1.0, 0.0, 0.0])
+    d = d / np.linalg.norm(d)
+    spacing = 2.0 * radius
+    offsets = (np.arange(count) - (count - 1) / 2.0) * spacing
+    pts = center[None, :] + offsets[:, None] * d[None, :]
+    # Clamp into the cavity (side wall and both ends): at intermediate tilts, or with many
+    # balls, a straight row leaves it (codex review 2026-09-15: 7.8 cm through the wall at
+    # 45 deg). A clamped ball may overlap a neighbour; MuJoCo separates those in the first
+    # steps, a ball outside the shell it never can.
+    rad = np.hypot(pts[:, 0], pts[:, 1])
+    over = rad > wall - radius
+    pts[over, :2] *= ((wall - radius) / rad[over])[:, None]
+    pts[:, 2] = np.clip(pts[:, 2], z_bot + radius, z_top - radius)
+    return pts
+
+
 def ball_local_positions(model, data, count):
     jug = model.body("jug").id
     ids = [model.body(f"jug_water_{i}").id for i in range(count)]

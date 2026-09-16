@@ -7,6 +7,7 @@ from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugLayDown,
     SpotJugMove,
     SpotJugRoll,
+    SpotJugRollConfig,
     SpotJugUpright,
     disable_velocity_rewards,
 )
@@ -81,7 +82,7 @@ def test_roll_rejects_sliding_and_spinning_in_place():
     omega[2:, :, 2] = -0.5 / task.config.radius
     pos[3, :, 2] = 0.5  # airborne translation and rotation
     coupled, slip = task._roll_speeds(pos, vel, omega, axis)
-    np.testing.assert_allclose(coupled[:, 0], [0, 0, 0.5, 0])
+    np.testing.assert_allclose(coupled[:, 0], [0, 0, min(0.5, task.config.roll_speed_cap), 0])   # capped
     assert slip[2, 0] == pytest.approx(0)
 
 
@@ -168,3 +169,144 @@ def test_invalid_construction_parameters_are_rejected(field, value):
 
     with pytest.raises(ValueError):
         SpotJugRoll(SpotJugRollConfig(**{field: value}))
+
+
+def test_arm_idle_is_a_neutral_nu11_task():
+    from sumo.tasks.spot.spot_jug_manipulation import SpotJugArmIdle, SpotJugUpright
+
+    idle, up = SpotJugArmIdle(), SpotJugUpright()
+    assert idle.nu == up.nu == 11
+    assert idle.model.nq == up.model.nq          # same scene (jug_joint), switchable layout
+    s = np.zeros((2, 1, idle.model.nq + idle.model.nv))
+    s[..., : idle.model.nq] = idle.reset_pose[: idle.model.nq]
+    b = idle.body_pose_start
+    s[..., b : b + 2] = 0.0
+    s[1, :, b + 7 + 12] += 0.8                    # arm_sh0 swung away from stowed
+    sens = np.zeros((2, 1, idle.model.nsensordata))
+    r = idle.reward(s, sens, np.zeros((2, 1, idle.nu)))
+    assert r[0] > r[1]                            # stowed arm wins
+    # moving the jug changes nothing for the idle task
+    s2 = s.copy()
+    s2[..., idle.object_pose_start : idle.object_pose_start + 2] += 1.0
+    assert idle.reward(s2, sens, np.zeros((2, 1, idle.nu))) == pytest.approx(r)
+
+
+def test_water_default_and_synthesized_pooling():
+    """Opt-in water: five 0.1 kg balls (~0.5 kg of stones) the planner places inside the perceived jug."""
+    from sumo.tasks.spot.jug_water import PROFILE, pooled_local_positions
+    assert SpotJugRoll().synthesized_joints == ()                                # deployed default: no water
+    task = SpotJugRoll(SpotJugRollConfig(water_fill_ratio=0.026))
+    assert task.water_count == 5 and task.water_mass == pytest.approx(0.495, abs=0.01)
+    assert task.synthesized_joints == tuple(f"jug_water_{i}_joint" for i in range(5))
+    wall, z_bot, z_top = PROFILE[0][1], PROFILE[0][0], PROFILE[1][0]
+    r = task.water_radius
+    for quat in ([1, 0, 0, 0], [np.sqrt(0.5), 0, -np.sqrt(0.5), 0], [np.sqrt(0.5), np.sqrt(0.5), 0, 0]):
+        local = pooled_local_positions(5, r, quat)
+        assert (np.hypot(local[:, 0], local[:, 1]) <= wall - r + 1e-6).all()     # inside the side wall
+        assert (local[:, 2] >= z_bot + r - 1e-6).all() and (local[:, 2] <= z_top - r + 1e-6).all()
+        d = np.linalg.norm(local[1:] - local[:-1], axis=-1)
+        assert (d >= 2 * r - 1e-9).all()                                         # no overlap
+    # synthesize_qpos: balls land inside the jug at the jug's world pose
+    q = np.array(task.reset_pose, dtype=float)
+    o = task.object_pose_start
+    q[o : o + 3] = [1.3, -0.5, 0.14]
+    q[o + 3 : o + 7] = [np.sqrt(0.5), 0, -np.sqrt(0.5), 0]                        # lying
+    task.synthesize_qpos(q)
+    for name in task.synthesized_joints:
+        adr = task.model.jnt_qposadr[task.model.joint(name).id]
+        assert np.linalg.norm(q[adr : adr + 3] - q[o : o + 3]) < 0.25
+        assert q[adr + 3 : adr + 7].tolist() == [1.0, 0.0, 0.0, 0.0]
+
+
+def test_pushing_modes_arrive_deadband_and_standoff():
+    """Inside arrive_tolerance the jug is left alone: flat position cost, no approach/roll, standoff on."""
+    task = SpotJugRoll()
+    c = task.config
+    c.goal_pos = np.array([1.5, -0.5, 0.14])
+    sensors = np.zeros((1, 1, task.model.nsensordata))
+    u = np.zeros((1, 1, task.nu))
+    def state(jug_xy, body_xy):
+        q = np.array(task.reset_pose, dtype=float)
+        b, o = task.body_pose_start, task.object_pose_start
+        q[b : b + 3] = [body_xy[0], body_xy[1], 0.52]
+        q[o : o + 3] = [jug_xy[0], jug_xy[1], 0.14]
+        q[o + 3 : o + 7] = [np.sqrt(0.5), 0, -np.sqrt(0.5), 0]
+        return np.concatenate([q, np.zeros(task.model.nv)])[None, None, :]
+    lying_axis = np.zeros((1, 1, task.model.nsensordata))
+    # jug 15 cm from the goal (arrived): position flat, approach/roll zero, standoff active when close
+    t_far = task.reward_terms(state((1.35, -0.5), (0.2, -0.5)), sensors, u)
+    t_near = task.reward_terms(state((1.35, -0.5), (1.0, -0.5)), sensors, u)
+    assert t_far["position"] == pytest.approx(0.0) and t_near["position"] == pytest.approx(0.0)
+    assert t_far["approach"] == pytest.approx(0.0) and t_far["roll"] == pytest.approx(0.0)
+    assert t_far["standoff"] == pytest.approx(0.0)                         # 1.15 m away: fine
+    assert t_near["standoff"] == pytest.approx(-c.w_standoff * (c.standoff_dist - 0.35))   # 0.35 m: penalised
+    # jug 1 m from the goal (not arrived): position cost past the tolerance, no standoff
+    t_go = task.reward_terms(state((0.5, -0.5), (0.2, -0.5)), sensors, u)
+    assert t_go["position"] == pytest.approx(-c.w_position * (1.0 - c.arrive_tolerance))
+    assert t_go["standoff"] == pytest.approx(0.0)
+    # 5 cm past the tolerance: the push terms are only 1/6 armed, the standoff 5/6
+    t_edge = task.reward_terms(state((1.2, -0.5), (0.85, -0.5)), sensors, u)
+    assert t_edge["standoff"] == pytest.approx(-c.w_standoff * (c.standoff_dist - 0.35) * (1 - 0.05 / c.arrive_ramp))
+    assert abs(t_edge["approach"]) < abs(task.reward_terms(state((0.5, -0.5), (0.85, -0.5)), sensors, u)["approach"])
+
+
+def test_roll_speed_is_capped_and_overspeed_costs():
+    task = SpotJugRoll()
+    c = task.config
+    sensors = np.zeros((1, 1, task.model.nsensordata))
+    sensors[..., task.object_z_axis_start : task.object_z_axis_start + 3] = [1.0, 0.0, 0.0]   # lying, axis along x
+    c.goal_pos = np.array([3.0, 0.0, 0.14])
+    c.start_pos = np.array([0.95, 0.0, 0.0])
+    u = np.zeros((1, 1, task.nu))
+    def state(vx):
+        q = np.array(task.reset_pose, dtype=float)
+        o, vo = task.object_pose_start, task.object_vel_start      # both index the full state
+        q[o : o + 3] = [1.5, 0.0, 0.14]
+        st = np.concatenate([q, np.zeros(task.model.nv)])
+        st[vo] = vx                                  # jug sliding/rolling toward the goal at vx
+        return st[None, None, :]
+    slow, fast = task.reward_terms(state(0.2), sensors, u), task.reward_terms(state(0.8), sensors, u)
+    assert slow["overspeed"] == pytest.approx(0.0)
+    assert fast["overspeed"] == pytest.approx(-c.w_overspeed * (0.8 - c.roll_speed_cap))
+    assert fast["roll"] <= c.w_roll * c.roll_speed_cap + 1e-9              # nothing extra for speed past the cap
+
+
+def test_roll_term_is_gated_by_arrival_with_a_really_rolling_jug():
+    task = SpotJugRoll()
+    c = task.config
+    c.goal_pos = np.array([3.0, 0.0, 0.14])
+    c.start_pos = np.array([0.95, 0.0, 0.0])
+    sensors = np.zeros((1, 1, task.model.nsensordata))
+    sensors[..., task.object_z_axis_start : task.object_z_axis_start + 3] = [0.0, -1.0, 0.0]   # axis along -y: rolls along x
+    u = np.zeros((1, 1, task.nu))
+    def rolling_state(x):
+        q = np.array(task.reset_pose, dtype=float)
+        o, vo = task.object_pose_start, task.object_vel_start
+        q[o : o + 3] = [x, 0.0, 0.14]
+        st = np.concatenate([q, np.zeros(task.model.nv)])
+        st[vo] = 0.25                                  # forward 0.25 m/s ...
+        st[vo + 5] = -0.25 / c.radius                  # ... coupled spin about the body z axis
+        return st[None, None, :]
+    far, arrived = task.reward_terms(rolling_state(1.5), sensors, u), task.reward_terms(rolling_state(2.9), sensors, u)
+    assert far["roll"] > 0.0                              # coupled rolling toward B is rewarded ...
+    assert arrived["roll"] == pytest.approx(0.0)          # ... until the jug has arrived
+    assert far["overspeed"] == pytest.approx(0.0)
+
+
+def test_arrive_ramp_must_be_positive():
+    with pytest.raises(ValueError):
+        SpotJugRoll(SpotJugRollConfig(arrive_ramp=0.0))
+
+
+def test_pooled_water_stays_inside_the_cavity_at_any_tilt():
+    from sumo.tasks.spot.jug_water import PROFILE, pooled_local_positions
+    wall, z_bot, z_top = PROFILE[0][1], PROFILE[0][0], PROFILE[1][0]
+    r = 0.025
+    rng = np.random.default_rng(1)
+    for _ in range(50):
+        q = rng.normal(size=4)
+        q /= np.linalg.norm(q)
+        for n in (5, 19):
+            p = pooled_local_positions(n, r, q)
+            assert (np.hypot(p[:, 0], p[:, 1]) <= wall - r + 1e-6).all()
+            assert (p[:, 2] >= z_bot + r - 1e-6).all() and (p[:, 2] <= z_top - r + 1e-6).all()

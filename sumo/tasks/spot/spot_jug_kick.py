@@ -40,6 +40,7 @@ class SpotJugKickConfig(SpotBaseConfig):
     # the deployed nu=3 family, so a runtime switch into or out of kick keeps one mapping.
     yaw_rate_min: float = 0.4
     yaw_rate_deadzone: float = 0.1
+    xy_speed_deadzone: float = 0.08   # see look_at.LookAtPointFields
     # Success when the jug's own z-axis has a world-z cosine below this (>60 deg over).
     tip_success_cos: float = 0.5
     goal_pos: np.ndarray = np_1d_field(
