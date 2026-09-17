@@ -165,12 +165,12 @@ def test_coarse_balls_never_overlap_when_pooled_per_tick():
     from sumo.tasks.spot import jug_water
 
     (z_bot, wall), (z_top, _), *_ = jug_water.PROFILE
-    for radius, counts in ((0.045, (1, 2, 3)), (0.04, (1, 3, 5)), (0.035, (5, 7))):
+    for radius, counts in ((0.045, (1, 2, 3)), (0.04, (5,)), (0.035, (7,))):
       for count in counts:
         for tilt_deg in (0, 10, 30, 45, 60, 90, 100, 120, 150, 180):
             a = np.radians(tilt_deg) / 2
             quat = (np.cos(a), np.sin(a), 0.0, 0.0)            # tilt about x
-            pts = jug_water.pooled_local_positions(count, radius, quat)
+            pts = jug_water.packed_local_positions(count, radius, quat)
             assert pts.shape == (count, 3), (radius, count, tilt_deg)
             assert np.all(np.hypot(pts[:, 0], pts[:, 1]) <= wall - radius + 1e-9), (radius, count, tilt_deg)
             assert np.all(pts[:, 2] >= z_bot + radius - 1e-9) and np.all(pts[:, 2] <= z_top - radius + 1e-9)
@@ -180,3 +180,21 @@ def test_coarse_balls_never_overlap_when_pooled_per_tick():
     # fine balls keep the historical row placement (the frozen profile's behaviour)
     fine = jug_water.pooled_local_positions(19, 0.025, (0.7071, 0.7071, 0.0, 0.0))
     assert fine.shape == (19, 3)
+
+
+def test_coarse_profile_synthesizes_packed_water():
+    from sumo.tasks.spot import jug_water
+
+    task = SpotJugRollArmGentleCoarse()
+    q = np.array(task.reset_pose, dtype=float)
+    task.synthesize_qpos(q)
+    o = task.object_pose_start
+    quat = q[o + 3 : o + 7] / np.linalg.norm(q[o + 3 : o + 7])
+    local = jug_water.packed_local_positions(task.water_count, task.water_radius, quat)
+    for name in task.synthesized_joints:
+        adr = int(task.model.joint(name).qposadr[0])
+        world = q[adr : adr + 3]
+        assert np.linalg.norm(world - q[o : o + 3]) < 0.5, name
+    for i in range(task.water_count):
+        for j in range(i + 1, task.water_count):
+            assert np.linalg.norm(local[i] - local[j]) >= 2 * task.water_radius - 1e-9

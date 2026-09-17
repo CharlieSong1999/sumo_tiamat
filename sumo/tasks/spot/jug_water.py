@@ -180,42 +180,31 @@ def pooled_local_positions(count, radius, quat_wxyz):
         d = np.array([1.0, 0.0, 0.0])
     d = d / np.linalg.norm(d)
     spacing = 2.0 * radius
-    # Few, big balls (the coarse profiles): a placement that keeps them APART by
-    # construction, because the planner re-synthesizes this every tick and an overlap
-    # is a 1 m/s transient in every rollout (codex review 2026-09-17). Tilted or lying:
-    # rows along the wall's generatrix (straight, so spacing survives), side by side
-    # around the lowest line of the wall, piled against the lower end cap. Near upright:
-    # a flat cluster on the bottom (centre + ring). Fine balls keep the row below.
-    gap = spacing + 0.001
-    per_row = int((z_top - z_bot - 2 * radius) // gap) + 1
-    flat_fits = count <= 3 or gap <= wall - radius           # ring of radius `gap` inside the wall
-    if count <= 7 and count <= 3 * per_row and (radial > 0.5 or flat_fits):
+    # Few, big balls: a placement that keeps them APART by construction, because the
+    # planner re-synthesizes this every tick and an overlap is a 1 m/s transient in every
+    # rollout (codex review 2026-09-17). This <=3-ball rule is what packed_local_positions
+    # (5/7 balls) delegates to and preserves; do not change one without the other.
+    # Tilted or lying: a line along the wall's generatrix (straight, so spacing survives),
+    # piled against the lower end cap. Near upright: a flat cluster on the bottom.
+    if count <= 3 and (count - 1) * spacing + 2 * radius <= z_top - z_bot:
         if radial > 0.5:                                    # more than ~30 deg from upright
-            phi0 = np.arctan2(u[1], u[0])                   # wall angle of the lowest line
-            dphi = 2.0 * np.arcsin(min(1.0, gap / (2.0 * (wall - radius))))
-            pts = []
-            for phi in (0.0, dphi, -dphi):
-                n = min(per_row, count - len(pts))
-                if n <= 0:
-                    break
-                if u[2] < -0.05:                            # bottom end is lower: pile there
-                    z0 = z_bot + radius
-                elif u[2] > 0.05:                           # top end is lower
-                    z0 = z_top - radius - (n - 1) * gap
-                else:                                       # level: centred on the wall
-                    z0 = z_mid - (n - 1) * gap / 2.0
-                x, y = (wall - radius) * np.cos(phi0 + phi), (wall - radius) * np.sin(phi0 + phi)
-                pts += [[x, y, z0 + k * gap] for k in range(n)]
-            return np.array(pts)
+            rdir = np.array([u[0], u[1], 0.0]) / radial * (wall - radius)
+            if u[2] < -0.05:                                # bottom end is lower: pile there
+                z0 = z_bot + radius
+            elif u[2] > 0.05:                               # top end is lower
+                z0 = z_top - radius - (count - 1) * spacing
+            else:                                           # level: centred on the wall
+                z0 = z_mid - (count - 1) * spacing / 2.0
+            return np.array([[rdir[0], rdir[1], z0 + k * spacing] for k in range(count)])
         z_floor = z_bot + radius if u[2] <= 0 else z_top - radius
-        if count == 2:
-            xy = [[-radius, 0.0], [radius, 0.0]]
-        elif count == 3:                                    # equilateral triangle, side 2r
+        if count == 1:
+            xy = np.zeros((1, 2))
+        elif count == 2:
+            xy = np.array([[-radius, 0.0], [radius, 0.0]])
+        else:                                               # equilateral triangle, side 2r
             circ = spacing / np.sqrt(3.0)
-            xy = [[circ * np.cos(a), circ * np.sin(a)] for a in (np.pi / 2, np.pi / 2 + 2 * np.pi / 3, np.pi / 2 + 4 * np.pi / 3)]
-        else:                                               # centre + ring of up to 6
-            xy = [[0.0, 0.0]] + [[gap * np.cos(2 * np.pi * k / 6), gap * np.sin(2 * np.pi * k / 6)] for k in range(count - 1)]
-        return np.array([[x, y, z_floor] for x, y in xy])
+            xy = circ * np.array([[np.cos(a), np.sin(a)] for a in (np.pi / 2, np.pi / 2 + 2 * np.pi / 3, np.pi / 2 + 4 * np.pi / 3)])
+        return np.column_stack([xy, np.full(len(xy), z_floor)])
     offsets = (np.arange(count) - (count - 1) / 2.0) * spacing
     pts = center[None, :] + offsets[:, None] * d[None, :]
     # Clamp into the cavity (side wall and both ends): at intermediate tilts, or with many
@@ -227,6 +216,76 @@ def pooled_local_positions(count, radius, quat_wxyz):
     pts[over, :2] *= ((wall - radius) / rad[over])[:, None]
     pts[:, 2] = np.clip(pts[:, 2], z_bot + radius, z_top - radius)
     return pts
+
+
+# Radii of the validated coarse-water study (tools/jug_roll_water_reconstruction.py).
+PACKED_RADII = {3: 0.045, 5: 0.04, 7: 0.035}
+
+
+def packed_local_positions(count, radius, quat):
+    """Nonoverlapping coarse proxy, NOT a static equilibrium or a fluid estimator.
+
+    Authoritative copy of the placement developed in tools/jug_roll_water_reconstruction.py
+    (2026-09-17); that tool imports this. Preserve the deployed <=3-ball rule exactly.
+    For 5/7, select low gravitational potential sites from a translated seven-column
+    hexagonal lattice. All columns are separated by >=2r and inside an inscribed
+    cylinder; all axial levels are separated by >=2r. Selecting a subset cannot
+    introduce overlaps. Ties minimize horizontal centre-of-mass bias. No target/robot/
+    seed enters the placement.
+    """
+    import itertools
+
+    quat = np.asarray(quat, dtype=float)
+    if quat.shape != (4,) or not np.isfinite(quat).all() or np.linalg.norm(quat) < 1e-8:
+        raise ValueError("Invalid jug quaternion")
+    quat = quat / np.linalg.norm(quat)
+    if count <= 3:
+        return pooled_local_positions(count, radius, quat)
+    if count not in (5, 7) or not np.isclose(radius, PACKED_RADII[count], rtol=0, atol=1e-12):
+        raise ValueError("Packing is validated only for the 3/5/7-ball study")
+    rotation = np.empty(9)
+    mujoco.mju_quat2Mat(rotation, quat)
+    down = rotation.reshape(3, 3).T @ np.array([0.0, 0.0, -1.0])
+    radial = np.linalg.norm(down[:2])
+    axis = down[:2] / radial if radial > 1e-10 else np.array([1.0, 0.0])
+    lateral = np.array([-axis[1], axis[0]])
+    (bottom, wall), (top, _), *_ = PROFILE
+    margin = 0.0005
+    spacing = 2 * radius + 0.001
+    room = wall - radius - margin
+    if spacing > room:
+        raise ValueError("Hexagonal lattice does not fit")
+    angles = np.arange(6) * np.pi / 3
+    ring = spacing * (np.cos(angles)[:, None] * axis + np.sin(angles)[:, None] * lateral)
+    xy = np.vstack([np.zeros(2), ring])
+    xy += (room - spacing) * axis * min(radial / 0.5, 1.0)
+    levels = int(np.floor((top - bottom - 2 * radius - 2 * margin) / spacing)) + 1
+    z = (np.arange(levels) - (levels - 1) / 2) * spacing + (bottom + top) / 2
+    if down[2] < -0.05:
+        z += bottom + radius + margin - z.min()
+    elif down[2] > 0.05:
+        z += top - radius - margin - z.max()
+    candidates = np.array([[*p, zz] for p in xy for zz in z])
+    potential = -(candidates @ down)
+    order = np.argsort(potential, kind="stable")
+    cutoff = potential[order[count - 1]]
+    selected = list(np.flatnonzero(potential < cutoff - 1e-10))
+    tied = np.flatnonzero(np.abs(potential - cutoff) <= 1e-10)
+    needed = count - len(selected)
+    centre = np.array([0.0, 0.0, (bottom + top) / 2])
+
+    def tie_score(indices):
+        points = candidates[selected + list(indices)]
+        com = points.mean(0) - centre
+        horizontal = com - np.dot(com, down) * down
+        return float(np.dot(horizontal, horizontal)), float(np.square(points - centre).sum())
+
+    selected.extend(min(itertools.combinations(tied.tolist(), needed), key=tie_score))
+    points = candidates[selected]
+    assert np.all(np.linalg.norm(points[:, :2], axis=1) + radius <= wall + 1e-10)
+    assert np.all(points[:, 2] - radius >= bottom - 1e-10)
+    assert np.all(points[:, 2] + radius <= top + 1e-10)
+    return points
 
 
 def ball_local_positions(model, data, count):

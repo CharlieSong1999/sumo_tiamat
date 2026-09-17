@@ -337,7 +337,8 @@ class SpotJugManipulation(SpotBase):
         """Fill the water balls' qpos in place from the jug's free-joint qpos (sumo_server.scene).
 
         The balls are put where settled water would sit for the jug's current
-        orientation (jug_water.pooled_local_positions); their quaternions are identity.
+        orientation (jug_water.packed_local_positions for the 3/5/7-ball coarse profiles,
+        jug_water.pooled_local_positions otherwise); their quaternions are identity.
         """
         if not self.water_count:
             return
@@ -347,7 +348,10 @@ class SpotJugManipulation(SpotBase):
         if not np.isfinite(norm) or norm < 1e-6:
             raise ValueError(f"jug quaternion {jug_quat.tolist()} is degenerate; cannot place the water")
         jug_quat = jug_quat / norm
-        local = jug_water.pooled_local_positions(self.water_count, self.water_radius, jug_quat)
+        if self.water_count in jug_water.PACKED_RADII and np.isclose(self.water_radius, jug_water.PACKED_RADII[self.water_count], rtol=0, atol=1e-12):
+            local = jug_water.packed_local_positions(self.water_count, self.water_radius, jug_quat)   # coarse profiles
+        else:
+            local = jug_water.pooled_local_positions(self.water_count, self.water_radius, jug_quat)
         rot = np.zeros(9)
         mujoco.mju_quat2Mat(rot, np.asarray(jug_quat, dtype=float))
         world = local @ rot.reshape(3, 3).T + jug_pos
