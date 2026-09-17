@@ -23,11 +23,13 @@ CAVITY_VOLUME = sum(
 # Largest ball that still sits inside the 0.127 m cylindrical part of the cavity with
 # margin (2026-09-17: 0.045 -> 3 balls, 0.06 -> 1 ball at 10 % fill).
 MAX_BALL_RADIUS = 0.06
-# From this many balls up the contact island is cheaper under CG/sparse than Newton;
-# below it Newton is cheaper and the deployed planner keeps its budget. Measured on the
-# 32x1.5 s arm-roll profile: 19 balls Newton 134 ms/plan, CG(50) 75-94 ms; 3 balls
-# Newton 41 ms. The 4..7 band is untested.
-CG_MIN_BALLS = 8
+# From this many balls up the contact island is cheaper under CG/sparse than Newton.
+# Measured on the deployed planner (32 x 1.5 s arm-roll profile, robot pushing the jug,
+# Xeon w5-3435X, ms/plan p50): Newton 3 balls 32-44, 7: 42, 9: 52, 11: 57 (CG: 57);
+# 19 balls Newton 134 (Ryzen) vs CG(50) 75-94. Newton wins or ties up to 11, CG wins at
+# 19; the crossover lies in 12..18, untested. Budget-wise (50 ms p95) the workstation
+# holds 7 balls under Newton; see auto_sumo/data/20260917_ball_sweep/.
+CG_MIN_BALLS = 12
 
 
 def water_parameters(fill_ratio, radius):
