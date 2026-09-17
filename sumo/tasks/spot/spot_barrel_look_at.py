@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from sumo.tasks.spot.arm_hold import arm_hold_pose, arm_hold_term, pin_finger_closed
 from sumo.tasks.spot.look_at import ramp
 from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive, SpotBarrelPerceiveConfig
 
@@ -117,3 +118,46 @@ class SpotBarrelLookAt(SpotBarrelPerceive):
         assert look_reward.shape == base.shape
         assert yaw_rate_reward.shape == base.shape
         return base + look_reward + yaw_rate_reward
+
+
+@dataclass
+class SpotBarrelLookAtArmConfig(SpotBarrelLookAtConfig):
+    """look_at's config plus the arm-hold cost of the nu=11 variant."""
+
+    w_arm_hold: float = 20.0      # as spot_jug_arm_idle's w_arm_stow
+
+
+class SpotBarrelLookAtArm(SpotBarrelLookAt):
+    """spot_barrel_look_at with the arm in the action space (nu=11), held still by reward.
+
+    Same scene, reward and yaw limits as spot_barrel_look_at; exists so the operator can
+    switch between facing the jug and the arm tasks (spot_jug_arm_idle, the
+    spot_jug_roll_arm_gentle_* profiles) in ONE policy session -- the policy honours
+    switches only within one action width (2026-09-18). The arm is held at the reset
+    (unstowed) pose with the finger closed; see arm_hold.py for why not stowed.
+    """
+
+    name = "spot_barrel_look_at_arm"
+    config_t: type[SpotBarrelLookAtArmConfig] = SpotBarrelLookAtArmConfig
+    config: SpotBarrelLookAtArmConfig
+    use_arm: bool = True
+    use_gripper: bool = True   # nu = 11, exactly the jug family's action space
+
+    @property
+    def actuator_ctrlrange(self) -> np.ndarray:
+        """look_at's bounds (yaw cap, xy lock) with the finger command pinned closed."""
+        return pin_finger_closed(super().actuator_ctrlrange)
+
+    def reward(
+        self,
+        states: np.ndarray,
+        sensors: np.ndarray,
+        controls: np.ndarray,
+        system_metadata: dict[str, Any] | None = None,
+    ) -> np.ndarray:
+        """look_at reward - w_arm_hold * |arm - hold pose|^2."""
+        base = super().reward(states, sensors, controls, system_metadata)
+        hold = arm_hold_term(states[..., : self.model.nq], self.body_pose_idx,
+                             arm_hold_pose(self), self.config.w_arm_hold)
+        assert hold.shape == base.shape
+        return base + hold

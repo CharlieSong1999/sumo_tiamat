@@ -71,7 +71,9 @@ SPOT_TASK_NAMES = (
     "spot_jug_move",
     "spot_barrel_perceive",
     "spot_barrel_look_at",
+    "spot_barrel_look_at_arm",
     "spot_navigate_look",
+    "spot_navigate_look_arm",
     "spot_pit_move",
     "spot_pit_move_plant",
     "spot_pit_pour",
@@ -80,7 +82,12 @@ SPOT_TASK_NAMES = (
 
 # Spot tasks (advanced, using C++ ONNX rollout backend via judo-rai's mujoco_spot)
 from sumo.tasks.spot.spot_barrel_drag_v1 import SpotBarrelDrag, SpotBarrelDragConfig
-from sumo.tasks.spot.spot_barrel_look_at import SpotBarrelLookAt, SpotBarrelLookAtConfig
+from sumo.tasks.spot.spot_barrel_look_at import (
+    SpotBarrelLookAt,
+    SpotBarrelLookAtArm,
+    SpotBarrelLookAtArmConfig,
+    SpotBarrelLookAtConfig,
+)
 from sumo.tasks.spot.spot_barrel_perceive import SpotBarrelPerceive, SpotBarrelPerceiveConfig
 from sumo.tasks.spot.spot_barrel_push import SpotBarrelPush, SpotBarrelPushConfig
 from sumo.tasks.spot.spot_barrel_upright import SpotBarrelUpright, SpotBarrelUprightConfig
@@ -116,7 +123,12 @@ from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugUprightGrasp,
     SpotJugUprightGraspConfig,
 )
-from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook, SpotNavigateLookConfig
+from sumo.tasks.spot.spot_navigate_look import (
+    SpotNavigateLook,
+    SpotNavigateLookArm,
+    SpotNavigateLookArmConfig,
+    SpotNavigateLookConfig,
+)
 from sumo.tasks.spot.spot_rack_push import SpotRackPush, SpotRackPushConfig
 from sumo.tasks.spot.spot_rack_upright import SpotRackUpright, SpotRackUprightConfig
 from sumo.tasks.spot.spot_rugged_box_push import SpotRuggedBoxPush, SpotRuggedBoxPushConfig
@@ -167,6 +179,8 @@ register_task("spot_jug_move", SpotJugMove, SpotJugMoveConfig, **_SPOT_REGISTRAT
 register_task("spot_barrel_perceive", SpotBarrelPerceive, SpotBarrelPerceiveConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_barrel_look_at", SpotBarrelLookAt, SpotBarrelLookAtConfig, **_SPOT_REGISTRATION_KWARGS)
 register_task("spot_navigate_look", SpotNavigateLook, SpotNavigateLookConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_barrel_look_at_arm", SpotBarrelLookAtArm, SpotBarrelLookAtArmConfig, **_SPOT_REGISTRATION_KWARGS)
+register_task("spot_navigate_look_arm", SpotNavigateLookArm, SpotNavigateLookArmConfig, **_SPOT_REGISTRATION_KWARGS)
 
 # Pit water-pitcher tasks: planner variants (no balls) + plant variants (with water balls).
 from sumo.tasks.spot.spot_pit_move import SpotPitMove, SpotPitMoveConfig, SpotPitMovePlant

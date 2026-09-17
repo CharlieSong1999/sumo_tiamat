@@ -10,8 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from judo.tasks.spot.spot_base import XML_PATH
+from judo.tasks.spot.spot_base import SpotBase as _JudoSpotBase
 from judo.tasks.spot.spot_navigate import SpotNavigate, SpotNavigateConfig
 
+from sumo.tasks.spot.arm_hold import arm_hold_pose, arm_hold_term, pin_finger_closed
 from sumo.tasks.spot.look_at import LookAtPointFields, point_look_term
 from sumo.tasks.spot.spot_base import YawFloorMixin
 
@@ -54,3 +57,48 @@ class SpotNavigateLook(YawFloorMixin, SpotNavigate):
         look = point_look_term(qpos, self.body_pose_idx, c)
         assert look.shape == goal.shape == fallen.shape
         return fallen + goal + ctrl + look
+
+
+@dataclass
+class SpotNavigateLookArmConfig(SpotNavigateLookConfig):
+    """navigate_look's config plus the arm-hold cost of the nu=11 variant."""
+
+    w_arm_hold: float = 20.0      # as spot_jug_arm_idle's w_arm_stow
+
+
+class SpotNavigateLookArm(SpotNavigateLook):
+    """spot_navigate_look with the arm in the action space (nu=11), held still by reward.
+
+    Same reward, goal well and look-at point; the arm tasks' family (see
+    SpotBarrelLookAtArm). No perceived objects, as spot_navigate_look. The arm is held at
+    the reset (unstowed) pose with the finger closed (arm_hold.py).
+    """
+
+    name = "spot_navigate_look_arm"
+    config_t: type[SpotNavigateLookArmConfig] = SpotNavigateLookArmConfig  # type: ignore[assignment]
+    config: SpotNavigateLookArmConfig
+
+    def __init__(self, config: "SpotNavigateLookArmConfig | None" = None) -> None:
+        # judo's SpotNavigate.__init__ hard-codes use_arm=False; build the judo base
+        # directly with the arm, then the one thing SpotNavigate's __init__ adds.
+        # use_gripper too: the jug family's nu=11 is base 3 + arm 7 + gripper 1.
+        _JudoSpotBase.__init__(self, model_path=XML_PATH, use_arm=True, use_gripper=True, config=config)
+        self.body_pose_idx = self.get_joint_position_start_index("base")
+
+    @property
+    def actuator_ctrlrange(self) -> np.ndarray:
+        """Judo's base+arm bounds with the finger command pinned closed."""
+        return pin_finger_closed(super().actuator_ctrlrange)
+
+    def reward(
+        self,
+        states: np.ndarray,
+        sensors: np.ndarray,
+        controls: np.ndarray,
+        system_metadata: "dict[str, Any] | None" = None,
+    ) -> np.ndarray:
+        base = super().reward(states, sensors, controls, system_metadata)
+        hold = arm_hold_term(states[..., : self.model.nq], self.body_pose_idx,
+                             arm_hold_pose(self), self.config.w_arm_hold)
+        assert hold.shape == base.shape
+        return base + hold

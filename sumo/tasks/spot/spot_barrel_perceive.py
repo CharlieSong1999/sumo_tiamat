@@ -68,9 +68,13 @@ class SpotBarrelPerceive(SpotBase[SpotBarrelPerceiveConfig]):
     # steers, but only with commands the robot executes unaided). Use spot_navigate_look
     # for precise heading control.
     yaw_floor_enabled: bool = False
+    # Action space: False = base velocity only (nu=3, the deployed spot_navigate morphology);
+    # the `_arm` variants set True (nu=11, the arm tasks' family) and hold the arm by reward.
+    use_arm: bool = False
+    use_gripper: bool = False   # with the arm: the jug family's nu=11 = base 3 + arm 7 + gripper 1
 
     def __init__(self, config: SpotBarrelPerceiveConfig | None = None) -> None:
-        super().__init__(model_path=XML_PATH, use_arm=False, config=config)
+        super().__init__(model_path=XML_PATH, use_arm=self.use_arm, use_gripper=self.use_gripper, config=config)
         self.body_pose_idx = self.get_joint_position_start_index("base")
 
     def navigate_reward(
