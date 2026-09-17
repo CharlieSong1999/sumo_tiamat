@@ -20,11 +20,21 @@ CAVITY_VOLUME = sum(
 )
 
 
+# Largest ball that still sits inside the 0.127 m cylindrical part of the cavity with
+# margin (2026-09-17: 0.045 -> 3 balls, 0.06 -> 1 ball at 10 % fill).
+MAX_BALL_RADIUS = 0.06
+# From this many balls up the contact island is cheaper under CG/sparse than Newton;
+# below it Newton is cheaper and the deployed planner keeps its budget. Measured on the
+# 32x1.5 s arm-roll profile: 19 balls Newton 134 ms/plan, CG(50) 75-94 ms; 3 balls
+# Newton 41 ms. The 4..7 band is untested.
+CG_MIN_BALLS = 8
+
+
 def water_parameters(fill_ratio, radius):
     if not 0 <= fill_ratio <= 0.25:
         raise ValueError("Jug water fill must be in [0, 0.25]; higher fills are not calibrated")
-    if not 0.01 <= radius <= 0.03:
-        raise ValueError("Water ball radius must be in [0.01, 0.03] metres")
+    if not 0.01 <= radius <= MAX_BALL_RADIUS:
+        raise ValueError(f"Water ball radius must be in [0.01, {MAX_BALL_RADIUS}] metres")
     mass = 1000 * CAVITY_VOLUME * fill_ratio
     count = max(1, round(mass / (1560 * 4 * np.pi * radius**3 / 3))) if fill_ratio else 0
     return count, mass
@@ -111,16 +121,25 @@ def settled_positions(count, radius, mass, quat):
     model = spec.compile()
     data = mujoco.MjData(model)
     spacing = 2 * radius + 0.002
-    xy = np.arange(-PROFILE[0][1] + radius + 0.004, PROFILE[0][1] - radius, spacing)
-    candidates = np.array(
-        [
-            [x, y, z]
-            for z in np.arange(PROFILE[0][0] + radius + 0.004, PROFILE[1][0] - radius, spacing)
-            for x in xy
-            for y in xy
-            if np.hypot(x, y) < PROFILE[0][1] - radius - 0.003
-        ]
-    )
+
+    def grid(xy):
+        return np.array(
+            [
+                [x, y, z]
+                for z in np.arange(PROFILE[0][0] + radius + 0.004, PROFILE[1][0] - radius, spacing)
+                for x in xy
+                for y in xy
+                if np.hypot(x, y) < PROFILE[0][1] - radius - 0.003
+            ]
+        )
+
+    # The original grid first: it is what every pinned reference run started from.
+    candidates = grid(np.arange(-PROFILE[0][1] + radius + 0.004, PROFILE[0][1] - radius, spacing))
+    if len(candidates) < count:
+        # Big balls (r >= 0.045) can miss it entirely; a grid symmetric about the axis
+        # always has the (0, 0) slot.
+        half = np.arange(0.0, PROFILE[0][1] - radius, spacing)
+        candidates = grid(np.unique(np.concatenate([-half, half])))
     if len(candidates) < count:
         raise ValueError("Requested particles exceed the validated initialization grid")
     order = np.argsort(-(candidates @ spec.option.gravity), kind="stable")
@@ -159,6 +178,30 @@ def pooled_local_positions(count, radius, quat_wxyz):
         d = np.array([1.0, 0.0, 0.0])
     d = d / np.linalg.norm(d)
     spacing = 2.0 * radius
+    # Few, big balls (the coarse profiles): a placement that keeps them APART by
+    # construction, because the planner re-synthesizes this every tick and an overlap
+    # is a 1 m/s transient in every rollout (codex review 2026-09-17). Tilted or lying:
+    # a line along the wall's generatrix (straight, so spacing survives), piled against
+    # the lower end cap. Near upright: a flat cluster on the bottom.
+    if count <= 3 and (count - 1) * spacing + 2 * radius <= z_top - z_bot:
+        if radial > 0.5:                                    # more than ~30 deg from upright
+            rdir = np.array([u[0], u[1], 0.0]) / radial * (wall - radius)
+            if u[2] < -0.05:                                # bottom end is lower: pile there
+                z0 = z_bot + radius
+            elif u[2] > 0.05:                               # top end is lower
+                z0 = z_top - radius - (count - 1) * spacing
+            else:                                           # level: centred on the wall
+                z0 = z_mid - (count - 1) * spacing / 2.0
+            return np.array([[rdir[0], rdir[1], z0 + k * spacing] for k in range(count)])
+        z_floor = z_bot + radius if u[2] <= 0 else z_top - radius
+        if count == 1:
+            xy = np.zeros((1, 2))
+        elif count == 2:
+            xy = np.array([[-radius, 0.0], [radius, 0.0]])
+        else:                                               # equilateral triangle, side 2r
+            circ = spacing / np.sqrt(3.0)
+            xy = circ * np.array([[np.cos(a), np.sin(a)] for a in (np.pi / 2, np.pi / 2 + 2 * np.pi / 3, np.pi / 2 + 4 * np.pi / 3)])
+        return np.column_stack([xy, np.full(len(xy), z_floor)])
     offsets = (np.arange(count) - (count - 1) / 2.0) * spacing
     pts = center[None, :] + offsets[:, None] * d[None, :]
     # Clamp into the cavity (side wall and both ends): at intermediate tilts, or with many

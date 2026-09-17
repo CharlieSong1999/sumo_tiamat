@@ -286,7 +286,8 @@ class SpotJugManipulation(SpotBase):
         if self.neck_grasp:
             jug_neck_grasp.build_neck_grasp(self.spec)
         if self.water_count:
-            jug_water.configure_water_solver(self.spec)
+            if self.water_count >= jug_water.CG_MIN_BALLS:
+                jug_water.configure_water_solver(self.spec)
             jug_water.add_inner_shell(self.spec, self.spec.body("jug"))
             jug_water.add_balls(self.spec, self.water_count, self.water_radius, self.water_mass)
             # Ground can catch an escaped ball; solid exterior hull never touches water.
@@ -686,6 +687,24 @@ class SpotJugRollArmGentleDryConfig(SpotJugRollArmGentleConfig):
 class SpotJugRollArmGentleDry(SpotJugRollArmGentle):
     name = "spot_jug_roll_arm_gentle_dry"
     config_t = SpotJugRollArmGentleDryConfig
+
+
+@dataclass
+class SpotJugRollArmGentleCoarseConfig(SpotJugRollArmGentleConfig):
+    """The gentle arm-roll profile with coarse water: 3 balls of r 0.045 m (same 1.903 kg).
+
+    Few balls keep the contact island small enough for the Newton solver (see
+    jug_water.CG_MIN_BALLS), which is what fits the deployed 50 ms plan budget
+    (41 ms/plan measured, 19 fine balls under CG: 75-94 ms). The water still sits in
+    the cavity and rolls with the jug; slosh granularity is coarse.
+    """
+
+    water_ball_radius: float = 0.045
+
+
+class SpotJugRollArmGentleCoarse(SpotJugRollArmGentle):
+    name = "spot_jug_roll_arm_gentle_coarse"
+    config_t = SpotJugRollArmGentleCoarseConfig
 
 
 class SpotJugMove(SpotJugManipulation):

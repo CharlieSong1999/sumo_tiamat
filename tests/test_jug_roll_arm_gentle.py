@@ -23,6 +23,8 @@ from sumo.controller.overrides import set_default_spot_overrides
 from sumo.tasks.spot.spot_jug_manipulation import (
     SpotJugRoll,
     SpotJugRollArmGentle,
+    SpotJugRollArmGentleCoarse,
+    SpotJugRollArmGentleCoarseConfig,
     SpotJugRollArmGentleConfig,
     SpotJugRollArmGentleDry,
     SpotJugRollArmGentleDryConfig,
@@ -120,3 +122,61 @@ def test_dry_variant_differs_only_in_water_and_mass():
     ctrl.set_override("spot_jug_roll_arm_gentle_dry")
     cem.set_override("spot_jug_roll_arm_gentle_dry")
     assert ctrl.horizon == 1.5 and cem.num_rollouts == 32 and cem.num_elites == 3
+
+
+def test_coarse_variant_keeps_newton_with_three_balls():
+    import mujoco
+
+    from sumo.tasks.spot import jug_water
+
+    wet = {k: _plain(v) for k, v in dataclasses.asdict(SpotJugRollArmGentleConfig()).items()}
+    coarse = {k: _plain(v) for k, v in dataclasses.asdict(SpotJugRollArmGentleCoarseConfig()).items()}
+    assert {k for k in wet if wet[k] != coarse[k]} == {"water_ball_radius"}
+    task = SpotJugRollArmGentleCoarse()
+    assert task.nu == 11 and task.roll_hand_sensors
+    assert task.water_count == 3 and task.water_mass == pytest.approx(1.903, abs=1e-3)
+    assert len(task.synthesized_joints) == 3
+    assert task.model.opt.solver == mujoco.mjtSolver.mjSOL_NEWTON
+    assert SpotJugRollArmGentle().model.opt.solver == mujoco.mjtSolver.mjSOL_CG
+    assert jug_water.water_parameters(0.1, 0.06)[0] == 1
+    with pytest.raises(ValueError):
+        jug_water.water_parameters(0.1, 0.07)
+    # the settled grid must have a slot for a ball this big (the axis)
+    for radius in (0.045, 0.06):
+        n, m = jug_water.water_parameters(0.1, radius)
+        pos = jug_water.settled_positions(n, radius, m, (0.7071, 0.7071, 0.0, 0.0))
+        assert pos.shape == (n, 3) and np.isfinite(pos).all()
+    assert "spot_jug_roll_arm_gentle_coarse" in get_registered_tasks()
+    set_default_spot_overrides()
+    set_default_spot_optimizer_overrides()
+    ctrl, cem = ControllerConfig(), CrossEntropyMethodConfig()
+    ctrl.set_override("spot_jug_roll_arm_gentle_coarse")
+    cem.set_override("spot_jug_roll_arm_gentle_coarse")
+    assert ctrl.horizon == 1.5 and cem.num_rollouts == 32
+
+
+def test_coarse_balls_never_overlap_when_pooled_per_tick():
+    """Pooled placement keeps few big balls apart and inside at every tilt.
+
+    The planner re-synthesizes the balls from the observed jug pose every tick; an
+    overlap is a contact transient in every rollout (review 2026-09-17: 0.93 m/s
+    within 50 ms at 30 deg).
+    """
+    from sumo.tasks.spot import jug_water
+
+    (z_bot, wall), (z_top, _), *_ = jug_water.PROFILE
+    radius = 0.045
+    for count in (1, 2, 3):
+        for tilt_deg in (0, 10, 30, 45, 60, 90, 120, 150, 180):
+            a = np.radians(tilt_deg) / 2
+            quat = (np.cos(a), np.sin(a), 0.0, 0.0)            # tilt about x
+            pts = jug_water.pooled_local_positions(count, radius, quat)
+            assert pts.shape == (count, 3)
+            assert np.all(np.hypot(pts[:, 0], pts[:, 1]) <= wall - radius + 1e-9), (count, tilt_deg)
+            assert np.all(pts[:, 2] >= z_bot + radius - 1e-9) and np.all(pts[:, 2] <= z_top - radius + 1e-9)
+            for i in range(count):
+                for j in range(i + 1, count):
+                    assert np.linalg.norm(pts[i] - pts[j]) >= 2 * radius - 1e-9, (count, tilt_deg, i, j)
+    # fine balls keep the historical row placement (the frozen profile's behaviour)
+    fine = jug_water.pooled_local_positions(19, 0.025, (0.7071, 0.7071, 0.0, 0.0))
+    assert fine.shape == (19, 3)

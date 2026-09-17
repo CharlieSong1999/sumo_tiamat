@@ -50,6 +50,6 @@ def set_default_spot_optimizer_overrides() -> None:
         _set_spot_optimizer_overrides(task_name)
     for task_name in ("spot_jug_upright", "spot_jug_upright_grasp"):
         set_config_overrides(task_name, CrossEntropyMethodConfig, _SPOT_UPRIGHT_CEM)
-    for task_name in ("spot_jug_roll_arm_gentle", "spot_jug_roll_arm_gentle_dry"):
+    for task_name in ("spot_jug_roll_arm_gentle", "spot_jug_roll_arm_gentle_dry", "spot_jug_roll_arm_gentle_coarse"):
         set_config_overrides(task_name, OptimizerConfig, {**_SPOT_OPTIMIZER_BASE, "num_rollouts": 32})
         set_config_overrides(task_name, CrossEntropyMethodConfig, _SPOT_ROLL_ARM_GENTLE_CEM)
