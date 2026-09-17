@@ -55,6 +55,8 @@ def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach
         config["w_hand_reach"] = float(hand_reach_weight)
     if task_name and (hand_reach_weight is not None or hand_reach_halfwidth):
         raise ValueError("--task runs a registered profile as-is; reward overrides do not apply to it")
+    if not task_name and (ground_friction is not None or reward_sets):
+        raise ValueError("--ground-friction / --set apply to a registered profile only; add --task NAME")
     if task_name:
         # A REGISTERED deployment profile (its defaults, as the planner builds it), with
         # the reference run's A/B geometry. Its state layout may differ from the
@@ -75,7 +77,10 @@ def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach
                 raise ValueError(f"--set {key}: construction-time field; use the dedicated option or a registered profile")
             if not hasattr(task.config, key):
                 raise ValueError(f"--set {key}: {task_name} has no such config field")
-            setattr(task.config, key, type(getattr(task.config, key))(value))
+            current = getattr(task.config, key)
+            if isinstance(current, bool) or not isinstance(current, (int, float)):
+                raise ValueError(f"--set {key}: only int/float fields are supported (field is {type(current).__name__})")
+            setattr(task.config, key, type(current)(value))
         for key in ("start_pos", "goal_pos"):
             setattr(task.config, key, np.asarray(config[key], dtype=float))
     elif hand_reach_halfwidth:
