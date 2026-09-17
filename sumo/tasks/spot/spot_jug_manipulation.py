@@ -691,15 +691,18 @@ class SpotJugRollArmGentleDry(SpotJugRollArmGentle):
 
 @dataclass
 class SpotJugRollArmGentleCoarseConfig(SpotJugRollArmGentleConfig):
-    """The gentle arm-roll profile with coarse water: 3 balls of r 0.045 m (same 1.903 kg).
+    """The gentle arm-roll profile with coarse water: 5 balls of r 0.04 m (same 1.903 kg).
 
     Few balls keep the contact island small enough for the Newton solver (see
-    jug_water.CG_MIN_BALLS), which is what fits the deployed 50 ms plan budget
-    (41 ms/plan measured, 19 fine balls under CG: 75-94 ms). The water still sits in
-    the cavity and rolls with the jug; slosh granularity is coarse.
+    jug_water.CG_MIN_BALLS), which is what fits the deployed 50 ms plan budget:
+    ball-count sweep 2026-09-17 (rwork, robot pushing) 3 balls 34-44 ms, 7 balls
+    42/46/49 ms (p50/p95/p99), 9 balls over; offline 4x3 mean final error 3 balls
+    0.56 m, 5 balls 0.35, 7 balls 0.29, 19 fine balls 0.27. Five is the margin choice
+    (about 5 ms under budget). The water still sits in the cavity and rolls with the
+    jug; slosh granularity is coarse.
     """
 
-    water_ball_radius: float = 0.045
+    water_ball_radius: float = 0.04
 
 
 class SpotJugRollArmGentleCoarse(SpotJugRollArmGentle):

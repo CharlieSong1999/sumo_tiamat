@@ -124,7 +124,7 @@ def test_dry_variant_differs_only_in_water_and_mass():
     assert ctrl.horizon == 1.5 and cem.num_rollouts == 32 and cem.num_elites == 3
 
 
-def test_coarse_variant_keeps_newton_with_three_balls():
+def test_coarse_variant_keeps_newton_with_five_balls():
     import mujoco
 
     from sumo.tasks.spot import jug_water
@@ -134,8 +134,8 @@ def test_coarse_variant_keeps_newton_with_three_balls():
     assert {k for k in wet if wet[k] != coarse[k]} == {"water_ball_radius"}
     task = SpotJugRollArmGentleCoarse()
     assert task.nu == 11 and task.roll_hand_sensors
-    assert task.water_count == 3 and task.water_mass == pytest.approx(1.903, abs=1e-3)
-    assert len(task.synthesized_joints) == 3
+    assert task.water_count == 5 and task.water_mass == pytest.approx(1.903, abs=1e-3)
+    assert len(task.synthesized_joints) == 5
     assert task.model.opt.solver == mujoco.mjtSolver.mjSOL_NEWTON
     assert SpotJugRollArmGentle().model.opt.solver == mujoco.mjtSolver.mjSOL_CG
     assert jug_water.water_parameters(0.1, 0.06)[0] == 1
@@ -165,18 +165,18 @@ def test_coarse_balls_never_overlap_when_pooled_per_tick():
     from sumo.tasks.spot import jug_water
 
     (z_bot, wall), (z_top, _), *_ = jug_water.PROFILE
-    radius = 0.045
-    for count in (1, 2, 3):
-        for tilt_deg in (0, 10, 30, 45, 60, 90, 120, 150, 180):
+    for radius, counts in ((0.045, (1, 2, 3)), (0.04, (1, 3, 5)), (0.035, (5, 7))):
+      for count in counts:
+        for tilt_deg in (0, 10, 30, 45, 60, 90, 100, 120, 150, 180):
             a = np.radians(tilt_deg) / 2
             quat = (np.cos(a), np.sin(a), 0.0, 0.0)            # tilt about x
             pts = jug_water.pooled_local_positions(count, radius, quat)
-            assert pts.shape == (count, 3)
-            assert np.all(np.hypot(pts[:, 0], pts[:, 1]) <= wall - radius + 1e-9), (count, tilt_deg)
+            assert pts.shape == (count, 3), (radius, count, tilt_deg)
+            assert np.all(np.hypot(pts[:, 0], pts[:, 1]) <= wall - radius + 1e-9), (radius, count, tilt_deg)
             assert np.all(pts[:, 2] >= z_bot + radius - 1e-9) and np.all(pts[:, 2] <= z_top - radius + 1e-9)
             for i in range(count):
                 for j in range(i + 1, count):
-                    assert np.linalg.norm(pts[i] - pts[j]) >= 2 * radius - 1e-9, (count, tilt_deg, i, j)
+                    assert np.linalg.norm(pts[i] - pts[j]) >= 2 * radius - 1e-9, (radius, count, tilt_deg, i, j)
     # fine balls keep the historical row placement (the frozen profile's behaviour)
     fine = jug_water.pooled_local_positions(19, 0.025, (0.7071, 0.7071, 0.0, 0.0))
     assert fine.shape == (19, 3)
