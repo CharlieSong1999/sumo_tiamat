@@ -33,7 +33,7 @@ SCENARIOS = {
 }
 
 
-def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach_halfwidth=0.0, task_name=None):
+def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach_halfwidth=0.0, task_name=None, water_ball_radius=None):
     if num_rollouts is not None and (not isinstance(num_rollouts, int) or num_rollouts < 3):
         raise ValueError("At least three paths are required for the frozen three-elite CEM")
     if horizon is not None and (not np.isfinite(horizon) or horizon <= 0 or not np.isclose(horizon / 0.02, round(horizon / 0.02))):
@@ -52,11 +52,17 @@ def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach
         # A REGISTERED deployment profile (its defaults, as the planner builds it), with
         # the reference run's A/B geometry. Its state layout may differ from the
         # reference (water balls), so the initial-state pins below do not apply.
-        from judo.tasks import get_registered_tasks
+        from judo.tasks import get_task_registration
 
         import sumo.tasks  # noqa: F401
 
-        task = get_registered_tasks()[task_name].task_type()
+        registration = get_task_registration(task_name)
+        if water_ball_radius is None:
+            task = registration.task_type()
+        else:
+            # Ball-count study: the registered profile with only the ball size changed
+            # (10 % fill fixed, so the count follows; see jug_water.water_parameters).
+            task = registration.task_type(registration.task_config_type(water_ball_radius=water_ball_radius))
         for key in ("start_pos", "goal_pos"):
             setattr(task.config, key, np.asarray(config[key], dtype=float))
     elif hand_reach_halfwidth:
@@ -205,6 +211,7 @@ def run(
     hand_reach_weight=None,
     hand_reach_halfwidth=0.0,
     task_name=None,
+    water_ball_radius=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"seed{seed}.json"
@@ -212,8 +219,9 @@ def run(
         raise FileExistsError(path)
     goals = SCENARIOS[scenario]
     task, controller, plant, initial, settings = make_system(
-        num_rollouts, horizon, hand_reach_weight, hand_reach_halfwidth, task_name
+        num_rollouts, horizon, hand_reach_weight, hand_reach_halfwidth, task_name, water_ball_radius
     )
+    num_rollouts, horizon = settings["num_rollouts"], settings["horizon"]   # resolved (registered defaults)
     if render_video:
         # Fail before a long simulation if the headless GL context is unavailable.
         with mujoco.Renderer(task.model, height=64, width=64):
@@ -516,6 +524,12 @@ def main():
              "instead of the frozen reference config; the initial-state pins are skipped",
     )
     p.add_argument(
+        "--water-ball-radius",
+        type=float,
+        default=None,
+        help="With --task: override only the water ball radius (ball count follows the fixed fill)",
+    )
+    p.add_argument(
         "--hand-reach-weight",
         type=float,
         default=None,
@@ -532,6 +546,7 @@ def main():
         args.hand_reach_weight,
         args.hand_reach_halfwidth,
         args.task,
+        args.water_ball_radius,
     )
 
 
