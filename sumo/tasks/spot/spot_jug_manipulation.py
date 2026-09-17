@@ -744,6 +744,13 @@ class SpotJugRollArmGentleCoarseConfig(SpotJugRollArmGentleConfig):
     # "does the robot look steadier" (2026-09-18); reward-only, switchable at runtime.
     w_torso_roll: float = 0.0
     w_torso_pitch: float = 0.0
+    # Yaw command deadzone widened 0.1 -> 0.25 rad/s (mapping-level, so rollouts and the robot
+    # agree). Real robot 2026-09-18 (roll1 bag): in the hold phases CEM's yaw noise was |wz|
+    # 0.13-0.24 rad/s with 46-71 % of plans above 0.1, each floored to 0.4 rad/s, and the legs
+    # shuffled at 0.2-1.0 rad/s RMS while a zero command stands perfectly still (0.01). In the
+    # rehearsal the wider deadzone cut the look_at_arm hold leg motion by ~60 % and left the
+    # push intact (jug to 0.10 m from B); an xy deadzone of 0.15 killed the push, so 0.08 stays.
+    yaw_rate_deadzone: float = 0.25
 
 
 class SpotJugRollArmGentleCoarse(SpotJugRollArmGentle):

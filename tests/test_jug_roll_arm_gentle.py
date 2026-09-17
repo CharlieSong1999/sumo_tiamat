@@ -131,7 +131,12 @@ def test_coarse_variant_keeps_newton_with_five_balls():
 
     wet = {k: _plain(v) for k, v in dataclasses.asdict(SpotJugRollArmGentleConfig()).items()}
     coarse = {k: _plain(v) for k, v in dataclasses.asdict(SpotJugRollArmGentleCoarseConfig()).items()}
-    assert {k for k in wet if wet[k] != coarse[k]} == {"water_ball_radius"}
+    # Shared fields that differ from the wet profile: the ball size, and the wider yaw command
+    # deadzone (0.1 -> 0.25 rad/s, 2026-09-18: CEM's hold-phase yaw noise was floored to 0.4 on
+    # the robot and the legs shuffled). The coarse-only study knobs (ground_friction,
+    # w_torso_*) are not in the wet profile and are checked in their own tests.
+    assert {k for k in wet if wet[k] != coarse[k]} == {"water_ball_radius", "yaw_rate_deadzone"}
+    assert coarse["yaw_rate_deadzone"] == 0.25
     task = SpotJugRollArmGentleCoarse()
     assert task.nu == 11 and task.roll_hand_sensors
     assert task.water_count == 5 and task.water_mass == pytest.approx(1.903, abs=1e-3)

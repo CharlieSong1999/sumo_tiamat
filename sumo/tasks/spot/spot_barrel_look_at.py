@@ -125,6 +125,10 @@ class SpotBarrelLookAtArmConfig(SpotBarrelLookAtConfig):
     """look_at's config plus the arm-hold cost of the nu=11 variant."""
 
     w_arm_hold: float = 20.0      # as spot_jug_arm_idle's w_arm_stow
+    # Yaw command deadzone 0.1 -> 0.25 rad/s (2026-09-18, see SpotJugRollArmGentleCoarseConfig):
+    # CEM's yaw noise is otherwise floored to 0.4 rad/s while the heading is already right,
+    # and the robot steps in place. Rehearsal: hold-phase leg motion -60 %, turning intact.
+    yaw_rate_deadzone: float = 0.25
 
 
 class SpotBarrelLookAtArm(SpotBarrelLookAt):

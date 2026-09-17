@@ -14,6 +14,7 @@ from sumo.tasks.spot.spot_jug_manipulation import SpotJugArmIdle
 from sumo.tasks.spot.spot_navigate_look import SpotNavigateLook, SpotNavigateLookArm
 
 ARM = ["spot_barrel_look_at_arm", "spot_navigate_look_arm"]
+DEADZONE_TASKS = ["spot_barrel_look_at_arm", "spot_jug_roll_arm_gentle_coarse"]
 
 
 @pytest.fixture(scope="module")
@@ -134,3 +135,19 @@ def test_facing_the_barrel_scores_higher_with_the_arm(tasks):
     o = t.barrel_pose_idx
     s0[..., o : o + 2] = s1[..., o : o + 2] = [2.0, 0.0]
     assert t.reward(s0, np.zeros((1, 1, 0)), u)[0] > t.reward(s1, np.zeros((1, 1, 0)), u)[0]
+
+
+@pytest.mark.parametrize("name", DEADZONE_TASKS)
+def test_yaw_deadzone_and_floor_boundaries(name, tasks):
+    """2026-09-18: yaw deadzone 0.25 (from 0.1). Below it the command is 0, at/above it the floor gives 0.4."""
+    t = tasks[name] if name == "spot_barrel_look_at_arm" else None
+    if t is None:
+        from sumo.tasks.spot.spot_jug_manipulation import SpotJugRollArmGentleCoarse
+
+        t = SpotJugRollArmGentleCoarse()
+    assert t.config.yaw_rate_deadzone == 0.25 and t.config.yaw_rate_min == 0.4
+    for wz, want in ((0.249, 0.0), (-0.249, 0.0), (0.25, 0.4), (-0.25, -0.4), (0.4, 0.4), (-0.4, -0.4)):
+        u = np.zeros((1, t.nu))
+        u[0, 2] = wz
+        cmd = np.asarray(t.task_to_sim_ctrl(u)).reshape(-1)
+        assert cmd[2] == pytest.approx(want), (name, wz, cmd[2])
