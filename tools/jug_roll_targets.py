@@ -33,7 +33,14 @@ SCENARIOS = {
 }
 
 
-def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach_halfwidth=0.0, task_name=None, water_ball_radius=None):
+# Fields the task reads at construction (model/sensors); a post-construction set would only LOOK applied.
+CONSTRUCTION_TIME_FIELDS = frozenset({"water_fill_ratio", "water_ball_radius", "jug_mass", "rolling_friction",
+                                      "roll_use_arm", "neck_grasp", "ground_friction",
+                                      "w_hand_speed", "w_hand_peak_speed", "w_hand_reach"})
+
+
+def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach_halfwidth=0.0, task_name=None, water_ball_radius=None,
+                ground_friction=None, reward_sets=None):
     if num_rollouts is not None and (not isinstance(num_rollouts, int) or num_rollouts < 3):
         raise ValueError("At least three paths are required for the frozen three-elite CEM")
     if horizon is not None and (not np.isfinite(horizon) or horizon <= 0 or not np.isclose(horizon / 0.02, round(horizon / 0.02))):
@@ -57,12 +64,18 @@ def make_system(num_rollouts=24, horizon=2.0, hand_reach_weight=None, hand_reach
         import sumo.tasks  # noqa: F401
 
         registration = get_task_registration(task_name)
-        if water_ball_radius is None:
-            task = registration.task_type()
-        else:
-            # Ball-count study: the registered profile with only the ball size changed
-            # (10 % fill fixed, so the count follows; see jug_water.water_parameters).
-            task = registration.task_type(registration.task_config_type(water_ball_radius=water_ball_radius))
+        # Studies on the registered profile with ONE construction-time field changed: the ball
+        # size (10 % fill fixed, so the count follows; see jug_water.water_parameters) or the
+        # floor's sliding friction (feet only; the jug keeps its own).
+        overrides = {k: v for k, v in (("water_ball_radius", water_ball_radius), ("ground_friction", ground_friction))
+                     if v is not None}
+        task = registration.task_type(registration.task_config_type(**overrides)) if overrides else registration.task_type()
+        for key, value in (reward_sets or {}).items():
+            if key in CONSTRUCTION_TIME_FIELDS:
+                raise ValueError(f"--set {key}: construction-time field; use the dedicated option or a registered profile")
+            if not hasattr(task.config, key):
+                raise ValueError(f"--set {key}: {task_name} has no such config field")
+            setattr(task.config, key, type(getattr(task.config, key))(value))
         for key in ("start_pos", "goal_pos"):
             setattr(task.config, key, np.asarray(config[key], dtype=float))
     elif hand_reach_halfwidth:
@@ -201,6 +214,17 @@ def intervals(rows, key, dt=0.02):
     return found
 
 
+def _torso_tilt_stats(task, poses):
+    """Body roll/pitch over the run (degrees): mean |.|, rms, max -- the 'does it look steady' numbers."""
+    from sumo.tasks.spot.spot_jug_manipulation import torso_roll_pitch
+    q = np.asarray(poses)[:, task.body_pose_start + 3 : task.body_pose_start + 7]
+    roll, pitch = torso_roll_pitch(q)
+    out = {}
+    for name, a in (("roll", np.degrees(roll)), ("pitch", np.degrees(pitch))):
+        out[name] = {"mean_abs": float(np.mean(np.abs(a))), "rms": float(np.sqrt(np.mean(a * a))), "max_abs": float(np.max(np.abs(a)))}
+    return out
+
+
 def run(
     out,
     scenario,
@@ -212,6 +236,8 @@ def run(
     hand_reach_halfwidth=0.0,
     task_name=None,
     water_ball_radius=None,
+    ground_friction=None,
+    reward_sets=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"seed{seed}.json"
@@ -219,7 +245,8 @@ def run(
         raise FileExistsError(path)
     goals = SCENARIOS[scenario]
     task, controller, plant, initial, settings = make_system(
-        num_rollouts, horizon, hand_reach_weight, hand_reach_halfwidth, task_name, water_ball_radius
+        num_rollouts, horizon, hand_reach_weight, hand_reach_halfwidth, task_name, water_ball_radius, ground_friction,
+        reward_sets,
     )
     num_rollouts, horizon = settings["num_rollouts"], settings["horizon"]   # resolved (registered defaults)
     if render_video:
@@ -445,6 +472,7 @@ def run(
         final=task.metrics(task.data),
         ever_fallen=ever_fallen,
         min_water_retained=retained,
+        torso_tilt_deg=_torso_tilt_stats(task, poses),
         contact_seconds={k: v * task.dt for k, v in totals.items()},
         mean_reward_terms={k: v / len(rows) for k, v in reward_sum.items()},
         motion={k: speed_summary([m[k] for m in motions]) for k in motions[0]},
@@ -530,6 +558,20 @@ def main():
         help="With --task: override only the water ball radius (ball count follows the fixed fill)",
     )
     p.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="FIELD=VALUE",
+        help="With --task: set a REWARD-ONLY config field after construction (e.g. w_torso_roll=200); "
+             "construction-time fields are refused",
+    )
+    p.add_argument(
+        "--ground-friction",
+        type=float,
+        default=None,
+        help="With --task: override the floor's sliding friction (feet only; the jug keeps its own)",
+    )
+    p.add_argument(
         "--hand-reach-weight",
         type=float,
         default=None,
@@ -547,6 +589,8 @@ def main():
         args.hand_reach_halfwidth,
         args.task,
         args.water_ball_radius,
+        args.ground_friction,
+        dict(kv.split("=", 1) for kv in args.set),
     )
 
 

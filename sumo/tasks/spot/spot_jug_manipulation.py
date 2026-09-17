@@ -14,6 +14,14 @@ from sumo.tasks.spot.spot_jug_kick import XML_PATH
 from sumo.tasks.spot.spot_upright import ground_clearance_height
 
 
+def torso_roll_pitch(quat_wxyz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Body roll and pitch (rad) from (..., 4) unit quaternions in MuJoCo's (w, x, y, z) order."""
+    w, x, y, z = (quat_wxyz[..., 0], quat_wxyz[..., 1], quat_wxyz[..., 2], quat_wxyz[..., 3])
+    roll = np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    pitch = np.arcsin(np.clip(2.0 * (w * y - z * x), -1.0, 1.0))
+    return roll, pitch
+
+
 @dataclass
 class SpotJugManipulationConfig(SpotBaseConfig):
     # Opt-in experiment only; existing tasks and deployment defaults are unchanged.
@@ -210,6 +218,8 @@ class SpotJugManipulation(SpotBase):
         # so every construction-time parameter is read from `water_config` here.
         self.jug_mass = float(water_config.jug_mass)
         self.rolling_friction = float(water_config.rolling_friction)
+        # Floor sliding friction for the feet (coarse profile's study knob; None = the XML's value).
+        self.ground_friction = getattr(water_config, "ground_friction", None)
         if not (np.isfinite(self.jug_mass) and self.jug_mass > 0):
             raise ValueError(f"jug_mass must be finite and positive, got {water_config.jug_mass!r}")
         if not (np.isfinite(self.rolling_friction) and self.rolling_friction >= 0):
@@ -283,6 +293,16 @@ class SpotJugManipulation(SpotBase):
         friction[2] = self.rolling_friction
         geom.friction = friction
         geom.condim = 6
+        # Study knob (2026-09-18): the floor's sliding friction, which governs the FEET only --
+        # the jug geom has priority 6 > the ground's 5, so its own triple wins that contact.
+        ground_friction = self.ground_friction
+        if ground_friction is not None:
+            if not (np.isfinite(ground_friction) and ground_friction > 0):
+                raise ValueError(f"ground_friction must be finite and > 0, got {ground_friction!r}")
+            ground = self.spec.geom("ground")
+            gf = np.asarray(ground.friction, dtype=float)
+            gf[0] = float(ground_friction)
+            ground.friction = gf
         if self.neck_grasp:
             jug_neck_grasp.build_neck_grasp(self.spec)
         if self.water_count:
@@ -448,6 +468,16 @@ class SpotJugManipulation(SpotBase):
             ),
             "fall": -c.fall_penalty * (body[..., 2] <= c.spot_fallen_threshold).any(-1),
         }
+        # Torso attitude costs (2026-09-18, coarse profile study knobs; 0 = absent, the
+        # frozen profiles are unchanged): quadratic in body roll / pitch over the horizon.
+        w_torso_roll = float(getattr(c, "w_torso_roll", 0.0))
+        w_torso_pitch = float(getattr(c, "w_torso_pitch", 0.0))
+        if w_torso_roll or w_torso_pitch:
+            roll, pitch = torso_roll_pitch(states[..., self.body_pose_start + 3 : self.body_pose_start + 7])
+            if w_torso_roll:
+                terms["torso_roll"] = -w_torso_roll * np.square(roll).mean(-1)
+            if w_torso_pitch:
+                terms["torso_pitch"] = -w_torso_pitch * np.square(pitch).mean(-1)
         if pushing:
             body_dist = np.linalg.norm(body[..., :2] - pos[..., :2], axis=-1)
             standoff = np.maximum(c.standoff_dist - body_dist, 0.0) * (1.0 - push)
@@ -707,6 +737,13 @@ class SpotJugRollArmGentleCoarseConfig(SpotJugRollArmGentleConfig):
     """
 
     water_ball_radius: float = 0.04
+    # Floor sliding friction for the robot's feet (the jug keeps its own; see __init__). 0.7 is
+    # the task XML's value; a study knob for the real-floor question (2026-09-18).
+    ground_friction: float = 0.7
+    # Torso attitude costs (rad^2, averaged over the horizon); 0 = off. Study knobs for
+    # "does the robot look steadier" (2026-09-18); reward-only, switchable at runtime.
+    w_torso_roll: float = 0.0
+    w_torso_pitch: float = 0.0
 
 
 class SpotJugRollArmGentleCoarse(SpotJugRollArmGentle):
